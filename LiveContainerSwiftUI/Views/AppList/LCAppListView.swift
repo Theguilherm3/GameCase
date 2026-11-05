@@ -1460,7 +1460,7 @@ enum LCGameLibraryInfo {
                 return image
             }
         }
-        var best: (image: UIImage, area: Double)?
+        var best: (image: UIImage, area: CGFloat)?
         for name in rest {
             let path = (bundlePath as NSString).appendingPathComponent(name)
             guard let size = imagePixelSize(atPath: path), isLandscapeCoverSize(size) else {
