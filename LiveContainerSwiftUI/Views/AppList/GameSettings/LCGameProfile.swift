@@ -2,9 +2,10 @@
 //  LCGameProfile.swift
 //  LiveContainerSwiftUI
 //
-//  每游戏设置页的数据真源：客体包内自带的 dm/launcher.json（引擎 settings.py 在打包时
-//  按该游戏的档案生成，键名 / 选项 / 默认值 / 分组 / 标签都以它为准），两款已知游戏再按
-//  当前 settings.tsv 做窄增补；解析不到且不是已知游戏时返回 nil，设置页只给通用提示。
+//  每游戏设置页的数据真源有且仅有一处：客体包内自带的 dm/launcher.json（引擎
+//  settings.py 在打包时按该游戏的档案生成，键名 / 选项 / 默认值 / 分组 / 标签都以
+//  它为准），与游戏自带启动器逐项一致；不做任何外部增补或内置兜底表，解析不到
+//  时返回 nil，设置页只给通用提示。LCKnownGame 只服务按键布局入口（容器功能）。
 //  偏好读写走 LCGamePrefs：目标游戏默认容器的 Library/Preferences/<bundleId>.plist，
 //  与游戏内启动器（LauncherSettings.swift）共用同一份：键 "launcher.<ENV>"、字符串值，
 //  等于默认值的选择按引擎惯例不落键（删键），其余键（DmPadCustom 等）原样保留。
@@ -113,17 +114,13 @@ struct LCLauncherSetting: Identifiable {
 // MARK: - 档案加载
 
 enum LCGameProfile {
-    /// 设置页的设置清单：客体自带 launcher.json 优先，其次已知游戏的内置表，都没有返回 nil
+    /// 设置页的设置清单：只解析客体自带的 dm/launcher.json 原文，解析不到返回 nil
     static func loadSettings(app: LCAppModel) -> [LCLauncherSetting]? {
-        let known = LCKnownGame.from(bundleIdentifier: app.bundleIdentifier)
         if let bundlePath = app.appInfo.bundlePath() {
             let url = URL(fileURLWithPath: bundlePath).appendingPathComponent("dm/launcher.json")
             if let data = try? Data(contentsOf: url), let parsed = parseLauncherJSON(data) {
-                return augment(parsed, known: known)
+                return parsed
             }
-        }
-        if let known {
-            return builtinSettings(known)
         }
         return nil
     }
@@ -159,120 +156,6 @@ enum LCGameProfile {
             out.append(s)
         }
         return out.isEmpty ? nil : out
-    }
-
-    /// 按当前 settings.tsv 对照增补：只补客体文件里缺的、当前构建线已支持的项，不改已有行
-    static func augment(_ settings: [LCLauncherSetting], known: LCKnownGame?) -> [LCLauncherSetting] {
-        var out = settings
-        switch known {
-        case .silksong:
-            // settings.tsv 现行三档：60 / 120 / 120L（降分辨率）；旧包的 launcher.json 只有两档
-            if let i = out.firstIndex(where: { $0.env == "SS_DISPLAY_HZ" }),
-               !out[i].options.contains(where: { $0.value == "120L" }) {
-                out[i].options.append((value: "120L", label: "120 帧（降分辨率）"))
-            }
-            // settings.tsv 现行四档皮肤：0 玻璃 / 1 荆棘 / 2 荆棘（角标）/ 3 黑铁；旧包只有三档
-            if let i = out.firstIndex(where: { $0.env == "DM_SILK_SKIN" }),
-               !out[i].options.contains(where: { $0.value == "3" }) {
-                out[i].options.append((value: "3", label: "黑铁"))
-            }
-        case .hades2:
-            // 哈迪斯旧包的 launcher.json 没有皮肤行；当前 settings.tsv 有 DM_HADES_SKIN
-            // （0 玻璃 / 1 月亮 / 2 月亮角标，与 DmGamepad 的 hadesSkinMode 一致）
-            if !out.contains(where: { $0.env == "DM_HADES_SKIN" }) {
-                var skin = LCLauncherSetting(
-                    env: "DM_HADES_SKIN", kind: "choice", section: "Controls",
-                    label: "按键皮肤",
-                    note: "玻璃 = 玻璃按键；月亮 = 图标皮肤；月亮（角标）= 带字母角标的图标皮肤",
-                    defaultValue: "1"
-                )
-                skin.options = [(value: "0", label: "玻璃"), (value: "1", label: "月亮"), (value: "2", label: "月亮（角标）")]
-                out.append(skin)
-            }
-        case nil:
-            break
-        }
-        return out
-    }
-
-    // MARK: 内置表（客体缺 launcher.json 时的已知游戏兜底，内容与解析路径同源）
-
-    private static func choice(_ env: String, _ section: String, _ label: String, _ def: String,
-                               _ options: [(String, String)], note: String = "") -> LCLauncherSetting {
-        var s = LCLauncherSetting(env: env, kind: "choice", section: section, label: label, note: note, defaultValue: def)
-        s.options = options.map { (value: $0.0, label: $0.1) }
-        return s
-    }
-
-    private static func toggle(_ env: String, _ section: String, _ label: String, _ def: String, needs: String? = nil, note: String = "") -> LCLauncherSetting {
-        var s = LCLauncherSetting(env: env, kind: "toggle", section: section, label: label, note: note, defaultValue: def)
-        s.needs = needs
-        return s
-    }
-
-    private static func range(_ env: String, _ section: String, _ label: String, _ def: String,
-                              _ lo: Double, _ hi: Double, _ step: Double, needs: String? = nil, note: String = "") -> LCLauncherSetting {
-        var s = LCLauncherSetting(env: env, kind: "range", section: section, label: label, note: note, defaultValue: def)
-        s.minValue = lo; s.maxValue = hi; s.stepValue = step; s.needs = needs
-        return s
-    }
-
-    private static let languageOptions: [(String, String)] = [
-        ("en-US", "美式英语"), ("ja", "日语"), ("fr", "法语"), ("de", "德语"), ("es", "西班牙语"),
-        ("it", "意大利语"), ("ru", "俄语"), ("ko", "韩语"), ("zh-Hant", "繁体中文"), ("zh-Hans", "简体中文"),
-        ("pt-BR", "巴西葡萄牙语"),
-    ]
-
-    static func builtinSettings(_ game: LCKnownGame) -> [LCLauncherSetting] {
-        switch game {
-        case .silksong:
-            // 出处：丝之歌现行包的 dm/launcher.json（引擎 settings.py 生成），再过 augment 的现行增补
-            let rows: [LCLauncherSetting] = [
-                choice("SS_DISPLAY_HZ", "Game", "帧率", "60",
-                       [("60", "60 帧"), ("120", "120 帧")],
-                       note: "120 帧需要设备屏幕支持，若设备不支持会自动回落 60 帧，持续高负载下可能因温控而降频，请谨慎使用"),
-                choice("DM_OPMODE", "Game", "主机模式", "1",
-                       [("1", "底座"), ("0", "掌机")],
-                       note: "底座 = 1080p 电视模式；掌机 = 720p，部分游戏的触屏功能仅掌机模式可用"),
-                choice("DM_PRESENT_UPSCALE", "Game", "超分", "off",
-                       [("off", "标准"), ("metalfx", "MetalFX")], note: "更吃 GPU，可能增加发热。"),
-                choice("DM_LANG", "Game", "游戏语言", "zh-Hans", languageOptions, note: "游戏内文本语言"),
-                toggle("DM_SHOW_FPS", "Game", "帧数计数器", "1", note: "左上角显示实时帧数"),
-                toggle("DM_TOUCH_HAPTICS", "Controls", "触控反馈", "1", note: "按下触屏按键时轻震一下"),
-                toggle("DM_RUMBLE", "Controls", "游戏震动", "1", note: "游戏内震动传到手机或手柄"),
-                range("DM_RUMBLE_GAIN", "Controls", "震动强度", "1.0", 0, 3, 0.1, needs: "DM_RUMBLE=1", note: "与游戏内的震动设置叠加生效"),
-                range("DM_RUMBLE_MIN", "Controls", "震动下限", "0", 0, 0.9, 0.05),
-                choice("DM_SILK_SKIN", "Controls", "按键皮肤", "1",
-                       [("0", "默认"), ("1", "黑荆棘"), ("2", "黑荆棘（角标）")],
-                       note: "默认 = 玻璃按键；黑荆棘 = 图标皮肤；黑荆棘（角标）= 带字母角标的图标皮肤"),
-                toggle("DM_PRESENT_SNAP", "Performance", "帧缓冲", "0", note: "可能减少卡顿；会增加显示延迟。"),
-                toggle("DM_PSO_MTL4", "Performance", "Metal 4 管线", "0", note: "保留管线档案；占用更多内存。"),
-                toggle("DM_PSO_PREBUILD", "Performance", "管线预构建", "1", note: "首次启动需等待几分钟，仅一次。"),
-                toggle("DM_NVN_ENC_THREAD", "Performance", "编码线程", "1"),
-                toggle("DM_METAL_HUD", "Performance", "性能面板", "0", note: "苹果开发者性能浮层（GPU、帧时间等），一般保持关闭"),
-            ]
-            return augment(rows, known: .silksong)
-        case .hades2:
-            // 出处：哈迪斯现行包的 dm/launcher.json + 当前 settings.tsv 的其余行
-            let rows: [LCLauncherSetting] = [
-                choice("DM_OPMODE", "Game", "主机模式", "1",
-                       [("1", "底座模式"), ("0", "掌机模式")]),
-                choice("DM_FULLSCREEN", "Game", "画面比例", "1",
-                       [("1", "自适应全屏"), ("0", "原生比例")]),
-                choice("DM_LANG", "Game", "游戏语言", "zh-Hans", languageOptions),
-                toggle("DM_SHOW_FPS", "Game", "帧数计数器", "1"),
-                toggle("DM_TOUCH_HAPTICS", "Controls", "触控反馈", "1"),
-                toggle("DM_RUMBLE", "Controls", "游戏震动", "1"),
-                range("DM_RUMBLE_GAIN", "Controls", "震动强度", "1.0", 0, 3, 0.1, needs: "DM_RUMBLE=1"),
-                range("DM_RUMBLE_MIN", "Controls", "震动下限", "0", 0, 0.9, 0.05),
-                toggle("DM_PRESENT_SNAP", "Performance", "帧缓冲", "0", note: "可能减少卡顿；会增加显示延迟。"),
-                toggle("DM_PSO_MTL4", "Performance", "Metal 4 管线", "0", note: "保留管线档案；占用更多内存。"),
-                toggle("DM_PSO_PREBUILD", "Performance", "管线预构建", "1", needs: "DM_PSO_MTL4=1", note: "首次启动需等待几分钟，仅一次。"),
-                toggle("DM_NVN_ENC_THREAD", "Performance", "编码线程", "1"),
-                toggle("DM_METAL_HUD", "Performance", "性能面板", "0"),
-            ]
-            return augment(rows, known: .hades2)
-        }
     }
 
     /// 被 env 文件固定的变量（包内 dm/env.txt、容器 Documents/env.txt）：启动器里只显示不改，这里同样锁定
