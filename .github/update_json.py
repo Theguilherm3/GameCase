@@ -114,14 +114,14 @@ def update_json_file_release(repo_url, json_file, latest_release):
     date_string = date_obj.strftime("%d/%m/%y")
     news_entry = {
         "appID": "com.kdt.livecontainer",
-        "caption": f"Update of LiveContainer just got released!",
+        "caption": f"Update of GameCase just got released!",
         "date": latest_release["published_at"],
         "identifier": news_identifier,
-        "imageURL": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/screenshots/release.png",
+        "imageURL": "https://raw.githubusercontent.com/Tiaoge-tou/GameCase/main/screenshots/release.png",
         "notify": True,
         "tintColor": "#0784FC",
-        "title": f"{full_version} - LiveContainer  {date_string}",
-        "url": f"https://github.com/LiveContainer/LiveContainer/releases/tag/{tag}"
+        "title": f"{full_version} - GameCase  {date_string}",
+        "url": f"https://github.com/Tiaoge-tou/GameCase/releases/tag/{tag}"
     }
 
     news_entry_exists = any(item["identifier"] == news_identifier for item in data["news"])
@@ -166,7 +166,7 @@ def update_json_file_nightly(json_file, nightly_release):
     commit_msg = os.environ.get("commit_msg", "").strip()
 
     description = f"""\
-Nightly build from [{commit_sha}](https://github.com/LiveContainer/LiveContainer/commit/{commit_sha}):\
+Nightly build from [{commit_sha}](https://github.com/Tiaoge-tou/GameCase/commit/{commit_sha}):\
  {commit_msg}
 
 This is a nightly release [created automatically with GitHub Actions workflow]({nightly_link}).
@@ -251,7 +251,7 @@ def update_json_file_release_ss_lc(repo_url, json_file, latest_release, is_night
     commit_msg = os.environ.get("commit_msg", "").strip()
 
     description = f"""\
-Nightly build from [{commit_sha}](https://github.com/LiveContainer/LiveContainer/commit/{commit_sha}):\
+Nightly build from [{commit_sha}](https://github.com/Tiaoge-tou/GameCase/commit/{commit_sha}):\
  {commit_msg}
     """
     assets = latest_release.get("assets", [])
@@ -303,14 +303,14 @@ Nightly build from [{commit_sha}](https://github.com/LiveContainer/LiveContainer
         date_string = date_obj.strftime("%d/%m/%y")
         news_entry = {
             "appID": "com.kdt.livecontainer",
-            "caption": f"Update of LiveContainer just got released!",
+            "caption": f"Update of GameCase just got released!",
             "date": latest_release["published_at"],
             "identifier": news_identifier,
-            "imageURL": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/screenshots/release.png",
+            "imageURL": "https://raw.githubusercontent.com/Tiaoge-tou/GameCase/main/screenshots/release.png",
             "notify": True,
             "tintColor": "#0784FC",
-            "title": f"{full_version} - LiveContainer  {date_string}",
-            "url": f"https://github.com/LiveContainer/LiveContainer/releases/tag/{tag}"
+            "title": f"{full_version} - GameCase  {date_string}",
+            "url": f"https://github.com/Tiaoge-tou/GameCase/releases/tag/{tag}"
         }
 
         news_entry_exists = any(item["identifier"] == news_identifier for item in data["news"])
@@ -332,7 +332,7 @@ Nightly build from [{commit_sha}](https://github.com/LiveContainer/LiveContainer
 
 
 def main():
-    repo_url = "LiveContainer/LiveContainer"
+    repo_url = "Tiaoge-tou/GameCase"
     is_nightly = "NIGHTLY_LINK" in os.environ
 
     try:

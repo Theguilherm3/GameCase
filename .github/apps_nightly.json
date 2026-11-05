@@ -1,12 +1,12 @@
 {
-  "name": "LiveContainer (nightly)",
+  "name": "GameCase (nightly)",
   "identifier": "com.livecontainer.source.nightly",
-  "website": "https://github.com/LiveContainer/LiveContainer",
-  "subtitle": "LiveContainer (nightly) official AltStore Source.",
-  "description": "This is the official AltStore Source for LiveContainer (nightly).\n\n Run iOS apps without actually installing them!",
+  "website": "https://github.com/Tiaoge-tou/GameCase",
+  "subtitle": "GameCase (nightly) AltStore Source.",
+  "description": "This is the AltStore Source for GameCase (nightly).\n\n Run iOS apps without actually installing them!",
   "tintColor": "#0784FC",
-  "iconURL": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/screenshots/AppIcon1024.png",
-  "headerURL": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/screenshots/header.png",
+  "iconURL": "https://raw.githubusercontent.com/Tiaoge-tou/GameCase/main/screenshots/AppIcon1024.png",
+  "headerURL": "https://raw.githubusercontent.com/Tiaoge-tou/GameCase/main/screenshots/header.png",
   "apps": [
     {
       "beta": false,
