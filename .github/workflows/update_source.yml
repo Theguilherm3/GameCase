@@ -45,15 +45,15 @@ jobs:
       run: |
         python .github/update_json.py
 
-    - name: Update apps.json in Release 1.0
-      uses: softprops/action-gh-release@v3
-      with:
-        tag_name: "1.0"
-        files: |
-          .github/apps.json
-          .github/apps_ss_lc.json
+    - name: Upload source JSONs to the triggering release
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        TAG="${{ github.event.release.tag_name }}"
+        if [ -z "$TAG" ]; then
+          TAG=$(gh api "repos/${{ github.repository }}/releases" --jq '[.[] | select(.draft == false and .prerelease == false and .tag_name != "nightly")][0].tag_name // empty')
+        fi
+        gh release upload "$TAG" .github/apps.json .github/apps_ss_lc.json --clobber
 
     - name: Calculate job duration
       id: duration
