@@ -255,19 +255,18 @@ static void *getAppEntryPoint(void *handle) {
 // 自拉起机制：清掉 selected 后调用 launchToGuestAppWithClassicMode:，新启的 LC 进程
 // 因 selected 已清而直接进入游戏库，客体进程随之终止（串行单开，符合既定规格）。
 //
-// 状态机：吸附态（玻璃舌半藏于所吸边）→ 点击展开（完整胶囊自所吸边滑出）→
-// 点「游戏库」回库 / 点栏外或 3 秒无操作收回吸附态。舌与栏均可拖动，松手吸附最近边。
+// 状态机（只吸上边，两态）：吸附态（横舌半藏于上边）→ 点击展开（完整胶囊自
+// 上边垂下）→ 点「游戏库」回库 / 点栏外或 3 秒无操作收回吸附态。舌与栏均可拖动，
+// 松手一律吸回上边，只保留落点的水平位置（沿上边的比例）。四边吸附 + 形态旋转
+// 的组合在真机上屡修不稳，按定版规格收敛为上边单一形态。
 // 持久化：本进程的 standardUserDefaults 已被客体钩子改指到客体容器（见
 // Tweaks/NSUserDefaults.m 的 NUDGuestHooksInit），不能存宿主状态；改用宿主容器内
-// 显式路径的 plist（LC_HOME_PATH/Library/Preferences/LCQuickBar.plist），存所吸边、
-// 沿边位置比例与回库 returning 标记，库侧 LCAppListView 读同一文件消费 returning。
+// 显式路径的 plist（LC_HOME_PATH/Library/Preferences/LCQuickBar.plist），存水平
+// 位置比例与回库 returning 标记（edge 键恒写上边值、保留键位兼容旧状态文件），
+// 库侧 LCAppListView 读同一文件消费 returning。
 
-typedef NS_ENUM(NSInteger, LCQuickBarEdge) {
-    LCQuickBarEdgeRight = 0,
-    LCQuickBarEdgeLeft = 1,
-    LCQuickBarEdgeTop = 2,
-    LCQuickBarEdgeBottom = 3,
-};
+// 状态文件 edge 键的恒定值：上边（旧四边版本的编号），仅为兼容已落盘的旧文件。
+static const NSInteger LCQBStoredEdgeTop = 2;
 
 typedef NS_ENUM(NSInteger, LCQBDirection) {
     LCQBDirectionLeft,
@@ -276,14 +275,12 @@ typedef NS_ENUM(NSInteger, LCQBDirection) {
     LCQBDirectionDown,
 };
 
-// 舌全尺寸 44×76pt、约 41% 半藏（露出 26pt）；展开胶囊高 46pt、离边 12pt（下边 20pt 避指示条）。
+// 横舌全尺寸 44（厚）×76（长）pt、约 41% 半藏（露出 26pt）；展开胶囊高 46pt、离上边 12pt。
 static const CGFloat LCQBTongueThickness = 44;
 static const CGFloat LCQBTongueLength = 76;
 static const CGFloat LCQBTongueVisible = 26;
 static const CGFloat LCQBBarHeight = 46;
 static const CGFloat LCQBBarGap = 12;
-static const CGFloat LCQBBarGapBottom = 20;
-static const CGFloat LCQBBottomBandHalf = 90; // 下边中央禁带半宽（Home 指示条横穿区）
 static const NSTimeInterval LCQBAutoCollapseDelay = 3;
 
 #pragma mark - 状态文件
@@ -571,10 +568,11 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     UIWindow *_veilWindow;
     NSTimer *_collapseTimer;
 
-    LCQuickBarEdge _edge;
-    CGFloat _ratio;
+    CGFloat _ratio; // 沿上边的水平位置比例（0~1），唯一的落点记忆
     BOOL _expanded;
     BOOL _returning;
+    BOOL _dragging;
+    BOOL _animating;
 }
 
 + (instancetype)sharedHandler {
@@ -588,14 +586,29 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
 
 - (void)sceneDidActivate:(NSNotification *)note {
     if ([note.object isKindOfClass:UIWindowScene.class]) {
-        [self attachToScene:(UIWindowScene *)note.object];
+        if (_attached && note.object == _scene) {
+            // 已挂载的场景再次激活：所有旋转信号万一都漏了，这里按当前
+            // bounds 做一次几何自愈（帧与现算结果不符才动，不闪烁）
+            [self healLayoutIfNeeded];
+        } else {
+            [self attachToScene:(UIWindowScene *)note.object];
+        }
     } else {
         [self attachToActiveSceneIfNeeded];
     }
 }
 
+- (void)windowDidBecomeKey:(NSNotification *)note {
+    // 任一窗口成为 key 都顺带审计一次几何：attach 晚于客体转横屏完成时，
+    // 初次布局可能用过过期 bounds，窗口焦点落定后按现状校正
+    [self healLayoutIfNeeded];
+}
+
 - (void)attachToActiveSceneIfNeeded {
-    if (_attached) return;
+    if (_attached) {
+        [self healLayoutIfNeeded];
+        return;
+    }
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if ([scene isKindOfClass:UIWindowScene.class] &&
             scene.activationState == UISceneActivationStateForegroundActive) {
@@ -627,9 +640,21 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     _rootView = rootView;
     _window = window;
     [self layoutForBounds:scene.coordinateSpace.bounds];
+    // 显示前最后一道核对（硬验收）：窗口帧必须等于按当前 bounds 现算并钳制过
+    // 的上边吸附帧，不一致就强制改回——旧 bounds 的过期几何（如竖长舌垂在顶上
+    // 盖住客体标题）永远不许被直接亮出来
+    CGRect expected = [self sanitizedDockedFrame:[self dockedFrameForBounds:scene.coordinateSpace.bounds]
+                                       forBounds:scene.coordinateSpace.bounds];
+    if (!CGRectEqualToRect(window.frame, expected)) {
+        window.frame = expected;
+    }
     window.hidden = NO;
     [self installRotationObservers];
-    NSLog(@"[LCBootstrap][quickbar] 快捷栏已挂载（edge=%ld, ratio=%.2f）", (long)_edge, _ratio);
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(windowDidBecomeKey:)
+                                               name:UIWindowDidBecomeKeyNotification
+                                             object:nil];
+    NSLog(@"[LCBootstrap][quickbar] 快捷栏已挂载（上边吸附, ratio=%.2f）", _ratio);
 }
 
 #pragma mark 旋转重排
@@ -691,6 +716,30 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     [self layoutForBounds:bounds];
 }
 
+// 自愈校正：不预设失效形态，按当前 scene bounds 现算上边吸附/展开几何，与
+// 实际帧逐项比对，不符才走 layoutForBounds 重排（帧本就正确时零开销、不闪烁）。
+// 触发源：场景再次激活、任一窗口成为 key、安装期的定时重试。覆盖：attach 时
+// 用了过期 bounds、旋转信号全漏、拖动/动画中途被打断留下的错位帧。覆盖不了：
+// bounds 本身还没更新完的瞬间（由旋转信号的 0.3s 二次核对接住）。
+- (void)healLayoutIfNeeded {
+    if (!_window || !_scene || _returning || _dragging || _animating) return;
+    CGRect bounds = _scene.coordinateSpace.bounds;
+    if (bounds.size.width <= 0 || bounds.size.height <= 0) return;
+    BOOL mismatch;
+    if (_expanded) {
+        CGRect expectedBar = [self sanitizedBarFrame:[self barFrameForBounds:bounds] forBounds:bounds];
+        mismatch = !CGRectEqualToRect(_window.frame, bounds) || !CGRectEqualToRect(_barGlass.frame, expectedBar);
+    } else {
+        CGRect expected = [self sanitizedDockedFrame:[self dockedFrameForBounds:bounds] forBounds:bounds];
+        mismatch = !CGRectEqualToRect(_window.frame, expected);
+    }
+    if (mismatch) {
+        NSLog(@"[LCBootstrap][quickbar] 几何自愈：按当前 bounds 重排（was %@）",
+              NSStringFromCGRect(_window.frame));
+        [self layoutForBounds:bounds];
+    }
+}
+
 #pragma mark 视图构建
 
 - (void)buildViews {
@@ -701,7 +750,8 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     _tongueGlass = LCQBMakeGlass(15, &tongueContent);
     _tongueContent = tongueContent;
     LCQBTouchView *tongueTouch = [[LCQBTouchView alloc] init];
-    tongueTouch.onTap = ^{ [weakSelf expand]; };
+    tongueTouch.onTouchBegan = ^{ [weakSelf dragDidBegin]; };
+    tongueTouch.onTap = ^{ [weakSelf dragDidEnd]; [weakSelf expand]; };
     tongueTouch.onDragDelta = ^(CGPoint delta) { [weakSelf dragWindowBy:delta]; };
     tongueTouch.onDragEnded = ^{ [weakSelf finishDragFromTongue]; };
     [_tongueContent addSubview:tongueTouch];
@@ -719,8 +769,8 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     _barGlass.hidden = YES;
     _barContent = barContent;
     LCQBTouchView *barTouch = [[LCQBTouchView alloc] init];
-    barTouch.onTouchBegan = ^{ [weakSelf resetCollapseTimer]; };
-    barTouch.onTap = ^{ [weakSelf resetCollapseTimer]; };
+    barTouch.onTouchBegan = ^{ [weakSelf dragDidBegin]; [weakSelf resetCollapseTimer]; };
+    barTouch.onTap = ^{ [weakSelf dragDidEnd]; [weakSelf resetCollapseTimer]; };
     barTouch.onDragDelta = ^(CGPoint delta) { [weakSelf dragBarBy:delta]; };
     barTouch.onDragEnded = ^{ [weakSelf finishDragFromBar]; };
     [_barContent addSubview:barTouch];
@@ -768,85 +818,71 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
 
 - (void)loadPersistedState {
     NSDictionary *state = LCQBLoadState();
-    NSNumber *edge = state[@"edge"];
+    // edge 键是旧四边版本的遗留，一律忽略：只吸上边。只读水平位置比例，
+    // 旧文件里的左右/下边落点比例平移过来即上边的位置，语义无损。
     NSNumber *ratio = state[@"ratio"];
-    _edge = edge ? (LCQuickBarEdge)edge.integerValue : LCQuickBarEdgeRight;
-    if (_edge < LCQuickBarEdgeRight || _edge > LCQuickBarEdgeBottom) _edge = LCQuickBarEdgeRight;
     _ratio = ratio ? ratio.doubleValue : 0.5;
     _ratio = MAX(0, MIN(1, _ratio));
 }
 
 - (void)persistState {
     NSMutableDictionary *state = LCQBLoadState();
-    state[@"edge"] = @(_edge);
+    state[@"edge"] = @(LCQBStoredEdgeTop);
     state[@"ratio"] = @(_ratio);
     LCQBSaveState(state);
 }
 
 #pragma mark 几何与布局
 
-- (BOOL)isVerticalEdge {
-    return _edge == LCQuickBarEdgeLeft || _edge == LCQuickBarEdgeRight;
-}
-
-// 沿边中心点：比例换算后钳制在两角内侧；下边再避开中央 180pt 指示条禁带，落带内时滑到带外最近处
+// 沿上边的水平中心点：比例换算后钳制在两角内侧
 - (CGFloat)alongCenterForBounds:(CGRect)bounds {
-    CGFloat axis = [self isVerticalEdge] ? bounds.size.height : bounds.size.width;
-    CGFloat center = _ratio * axis;
+    CGFloat center = _ratio * bounds.size.width;
     CGFloat half = LCQBTongueLength / 2 + 6;
-    center = MAX(half, MIN(center, axis - half));
-    if (_edge == LCQuickBarEdgeBottom) {
-        CGFloat mid = bounds.size.width / 2;
-        if (center > mid - LCQBBottomBandHalf && center < mid + LCQBBottomBandHalf) {
-            center = (center < mid) ? mid - LCQBBottomBandHalf : mid + LCQBBottomBandHalf;
-            center = MAX(half, MIN(center, bounds.size.width - half));
-        }
-    }
-    return center;
+    return MAX(half, MIN(center, bounds.size.width - half));
 }
 
+// 上边吸附帧（唯一的吸附几何）：横舌 76×44，上侧 18pt 藏在屏外
 - (CGRect)dockedFrameForBounds:(CGRect)bounds {
     CGFloat center = [self alongCenterForBounds:bounds];
-    CGFloat tucked = LCQBTongueThickness - LCQBTongueVisible; // 18
-    switch (_edge) {
-        case LCQuickBarEdgeRight:
-            return CGRectMake(bounds.size.width - LCQBTongueVisible, center - LCQBTongueLength / 2,
-                              LCQBTongueThickness, LCQBTongueLength);
-        case LCQuickBarEdgeLeft:
-            return CGRectMake(-tucked, center - LCQBTongueLength / 2,
-                              LCQBTongueThickness, LCQBTongueLength);
-        case LCQuickBarEdgeTop:
-            return CGRectMake(center - LCQBTongueLength / 2, -tucked,
-                              LCQBTongueLength, LCQBTongueThickness);
-        case LCQuickBarEdgeBottom:
-            return CGRectMake(center - LCQBTongueLength / 2, bounds.size.height - LCQBTongueVisible,
-                              LCQBTongueLength, LCQBTongueThickness);
-    }
-    return CGRectZero;
+    return CGRectMake(center - LCQBTongueLength / 2, -(LCQBTongueThickness - LCQBTongueVisible),
+                      LCQBTongueLength, LCQBTongueThickness);
 }
 
+// 合理性钳制（硬验收）：吸附帧的长/厚必须是规格值、原点必须落在顶边半藏位、
+// 水平不得越出两角；任一不满足即按当前 bounds 现算的规范帧替换。所有显示路径
+// 都经 layoutForBounds / attach 的这道钳制，禁止把跨 bounds 沿用的旧帧亮出来——
+// 竖长舌从顶上垂下盖住客体标题的形态（旧 bounds 的 44×76 竖帧被原样显示）
+// 在这里被结构性排除：本帧高恒为 44、y 恒为 -18。
+- (CGRect)sanitizedDockedFrame:(CGRect)frame forBounds:(CGRect)bounds {
+    CGFloat tucked = LCQBTongueThickness - LCQBTongueVisible;
+    BOOL sane = fabs(frame.size.width - LCQBTongueLength) < 0.6 &&
+                fabs(frame.size.height - LCQBTongueThickness) < 0.6 &&
+                fabs(frame.origin.y + tucked) < 0.6 &&
+                frame.origin.x >= -LCQBTongueLength / 2 - 1 &&
+                frame.origin.x <= bounds.size.width - LCQBTongueLength / 2 + 1;
+    if (sane) return frame;
+    NSLog(@"[LCBootstrap][quickbar] 吸附帧不合规格 %@，按当前 bounds 重算", NSStringFromCGRect(frame));
+    return [self dockedFrameForBounds:bounds];
+}
+
+// 展开胶囊帧：自上边垂下，离顶边 12pt，水平跟随舌的落点中心
 - (CGRect)barFrameForBounds:(CGRect)bounds {
     CGFloat center = [self alongCenterForBounds:bounds];
     CGFloat w = _barWidth, h = LCQBBarHeight;
-    switch (_edge) {
-        case LCQuickBarEdgeRight: {
-            CGFloat y = MAX(8, MIN(center - h / 2, bounds.size.height - h - 8));
-            return CGRectMake(bounds.size.width - LCQBBarGap - w, y, w, h);
-        }
-        case LCQuickBarEdgeLeft: {
-            CGFloat y = MAX(8, MIN(center - h / 2, bounds.size.height - h - 8));
-            return CGRectMake(LCQBBarGap, y, w, h);
-        }
-        case LCQuickBarEdgeTop: {
-            CGFloat x = MAX(8, MIN(center - w / 2, bounds.size.width - w - 8));
-            return CGRectMake(x, LCQBBarGap, w, h);
-        }
-        case LCQuickBarEdgeBottom: {
-            CGFloat x = MAX(8, MIN(center - w / 2, bounds.size.width - w - 8));
-            return CGRectMake(x, bounds.size.height - LCQBBarGapBottom - h, w, h);
-        }
-    }
-    return CGRectZero;
+    CGFloat x = MAX(8, MIN(center - w / 2, bounds.size.width - w - 8));
+    return CGRectMake(x, LCQBBarGap, w, h);
+}
+
+// 展开帧的合理性钳制：高/宽须为规格值、顶距恒为 12pt、水平不越界
+- (CGRect)sanitizedBarFrame:(CGRect)frame forBounds:(CGRect)bounds {
+    BOOL sane = fabs(frame.size.height - LCQBBarHeight) < 0.6 &&
+                fabs(frame.size.width - _barWidth) < 0.6 &&
+                fabs(frame.origin.y - LCQBBarGap) < 0.6 &&
+                frame.origin.x >= 8 - 1 &&
+                frame.origin.x <= bounds.size.width - _barWidth - 8 + 1;
+    if (sane) return frame;
+    NSLog(@"[LCBootstrap][quickbar] 展开帧不合规格 %@，按当前 bounds 重算", NSStringFromCGRect(frame));
+    return [self barFrameForBounds:bounds];
 }
 
 - (void)sizeGlass:(UIView *)glass {
@@ -861,13 +897,13 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     if (_expanded) {
         _window.frame = bounds;
         _rootView.frame = bounds;
-        _barGlass.frame = [self barFrameForBounds:bounds];
+        _barGlass.frame = [self sanitizedBarFrame:[self barFrameForBounds:bounds] forBounds:bounds];
         [self sizeGlass:_barGlass];
         _barTouch.frame = _barContent.bounds;
         _tongueGlass.hidden = YES;
         _barGlass.hidden = NO;
     } else {
-        CGRect frame = [self dockedFrameForBounds:bounds];
+        CGRect frame = [self sanitizedDockedFrame:[self dockedFrameForBounds:bounds] forBounds:bounds];
         _window.frame = frame;
         _rootView.frame = CGRectMake(0, 0, frame.size.width, frame.size.height);
         _tongueGlass.frame = _rootView.bounds;
@@ -883,66 +919,45 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     [self layoutForBounds:bounds];
 }
 
-// 舌内元素沿长轴依次排：握把 17、间 9、手柄 18、间 9、箭头 11，共 64，居中于长轴；
-// 横轴对准可见带中心（贴边一侧 18pt 藏在屏外）。
+// 舌内元素沿长轴（水平）依次排：握把 17、间 9、手柄 18、间 9、箭头 11，共 64，
+// 居中于长轴；纵轴对准可见带中心（贴顶边一侧 18pt 藏在屏外）。
 - (void)layoutTongueContent {
     _tongueTouch.frame = _tongueContent.bounds;
-    BOOL vertical = [self isVerticalEdge];
-    CGFloat stripCenter = LCQBTongueVisible / 2;
-    switch (_edge) {
-        case LCQuickBarEdgeRight: stripCenter = LCQBTongueVisible / 2; break;
-        case LCQuickBarEdgeLeft: stripCenter = LCQBTongueThickness - LCQBTongueVisible / 2; break;
-        case LCQuickBarEdgeTop: stripCenter = LCQBTongueThickness - LCQBTongueVisible / 2; break;
-        case LCQuickBarEdgeBottom: stripCenter = LCQBTongueVisible / 2; break;
-    }
-    _gripView.image = LCQBGripImage(vertical);
+    CGFloat stripCenter = LCQBTongueThickness - LCQBTongueVisible / 2;
+    _gripView.image = LCQBGripImage(NO);
     _gamepadView.image = LCQBGamepadImage();
     CGFloat along[3] = {17, 18, 11};
     CGFloat cross[3] = {11, 18, 11};
     UIView *views[3] = {_gripView, _gamepadView, _chevronView};
     CGFloat pos = (LCQBTongueLength - 64) / 2;
     for (int i = 0; i < 3; i++) {
-        if (vertical) {
-            views[i].frame = CGRectMake(stripCenter - cross[i] / 2, pos, cross[i], along[i]);
-        } else {
-            views[i].frame = CGRectMake(pos, stripCenter - cross[i] / 2, along[i], cross[i]);
-        }
+        views[i].frame = CGRectMake(pos, stripCenter - cross[i] / 2, along[i], cross[i]);
         pos += along[i] + 9;
     }
 }
 
-// 吸附态箭头指向屏内（展开方向）；展开态箭头指向所吸边（收回方向）
+// 吸附态箭头朝下（向屏内展开）；展开态收起箭头朝上（向顶边收回）
 - (void)refreshChevronImages {
-    LCQBDirection dockedDir = LCQBDirectionLeft, barDir = LCQBDirectionRight;
-    switch (_edge) {
-        case LCQuickBarEdgeRight: dockedDir = LCQBDirectionLeft; barDir = LCQBDirectionRight; break;
-        case LCQuickBarEdgeLeft: dockedDir = LCQBDirectionRight; barDir = LCQBDirectionLeft; break;
-        case LCQuickBarEdgeTop: dockedDir = LCQBDirectionDown; barDir = LCQBDirectionUp; break;
-        case LCQuickBarEdgeBottom: dockedDir = LCQBDirectionUp; barDir = LCQBDirectionDown; break;
-    }
-    _chevronView.image = LCQBChevronImage(dockedDir);
-    [_collapseButton setImage:LCQBChevronImage(barDir) forState:UIControlStateNormal];
+    _chevronView.image = LCQBChevronImage(LCQBDirectionDown);
+    [_collapseButton setImage:LCQBChevronImage(LCQBDirectionUp) forState:UIControlStateNormal];
 }
 
 #pragma mark 展开/收起
 
+// 展开/收起的滑动方向恒为纵向：展开自上边垂下（入场从上方落下），收起升回上边
 - (CGAffineTransform)edgeTranslation:(CGFloat)distance {
-    switch (_edge) {
-        case LCQuickBarEdgeRight: return CGAffineTransformMakeTranslation(distance, 0);
-        case LCQuickBarEdgeLeft: return CGAffineTransformMakeTranslation(-distance, 0);
-        case LCQuickBarEdgeTop: return CGAffineTransformMakeTranslation(0, -distance);
-        case LCQuickBarEdgeBottom: return CGAffineTransformMakeTranslation(0, distance);
-    }
-    return CGAffineTransformIdentity;
+    return CGAffineTransformMakeTranslation(0, -distance);
 }
 
 - (void)expand {
     if (_expanded || !_window) return;
     _expanded = YES;
+    _animating = YES;
     CGRect bounds = _scene.coordinateSpace.bounds;
     _window.frame = bounds;
     _rootView.frame = bounds;
-    _barGlass.frame = [self barFrameForBounds:bounds];
+    // 亮出之前先过钳制：帧按当前 bounds 现算，旧帧不直接显示
+    _barGlass.frame = [self sanitizedBarFrame:[self barFrameForBounds:bounds] forBounds:bounds];
     [self sizeGlass:_barGlass];
     _barTouch.frame = _barContent.bounds;
     [self refreshChevronImages];
@@ -954,13 +969,16 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
         bar.alpha = 1;
         bar.transform = CGAffineTransformIdentity;
-    } completion:nil];
+    } completion:^(BOOL finished) {
+        self->_animating = NO;
+    }];
     [self resetCollapseTimer];
 }
 
 - (void)collapseAnimated {
     if (!_expanded) return;
     _expanded = NO;
+    _animating = YES;
     [self invalidateCollapseTimer];
     UIView *bar = _barGlass;
     CGAffineTransform slide = [self edgeTranslation:28];
@@ -971,6 +989,8 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
         bar.hidden = YES;
         bar.alpha = 1;
         bar.transform = CGAffineTransformIdentity;
+        self->_animating = NO;
+        // 收回后回到吸附态：经 layoutForBounds 的钳制按当前 bounds 重排
         [self layoutForBounds:self->_scene.coordinateSpace.bounds];
     }];
 }
@@ -1016,32 +1036,36 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     [self resetCollapseTimer];
 }
 
-// 以给定中心点定所吸边（到四边距离最近者）与沿边比例，落盘后由调用方动画归位
-- (void)snapFromCenter:(CGPoint)center inBounds:(CGRect)bounds {
-    CGFloat dLeft = center.x, dRight = bounds.size.width - center.x;
-    CGFloat dTop = center.y, dBottom = bounds.size.height - center.y;
-    CGFloat nearest = MIN(MIN(dLeft, dRight), MIN(dTop, dBottom));
-    if (nearest == dLeft) _edge = LCQuickBarEdgeLeft;
-    else if (nearest == dRight) _edge = LCQuickBarEdgeRight;
-    else if (nearest == dTop) _edge = LCQuickBarEdgeTop;
-    else _edge = LCQuickBarEdgeBottom;
-    _ratio = [self isVerticalEdge] ? center.y / bounds.size.height : center.x / bounds.size.width;
+- (void)dragDidBegin {
+    _dragging = YES;
+}
+
+// 轻点（未成拖动）结束触摸时复位：自愈只在真拖动/动画期间让行
+- (void)dragDidEnd {
+    _dragging = NO;
+}
+
+// 松手一律吸回上边：只取落点的水平坐标换算沿边比例落盘，纵向位置不保留
+- (void)snapToTopFromCenter:(CGPoint)center inBounds:(CGRect)bounds {
+    _ratio = bounds.size.width > 0 ? center.x / bounds.size.width : 0.5;
     _ratio = MAX(0, MIN(1, _ratio));
     [self persistState];
 }
 
 - (void)finishDragFromTongue {
+    _dragging = NO;
     CGRect bounds = _scene.coordinateSpace.bounds;
-    [self snapFromCenter:_window.center inBounds:bounds];
+    [self snapToTopFromCenter:_window.center inBounds:bounds];
     [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
         [self layoutForBounds:bounds];
     } completion:nil];
 }
 
 - (void)finishDragFromBar {
+    _dragging = NO;
     CGRect bounds = _scene.coordinateSpace.bounds;
     CGPoint center = CGPointMake(CGRectGetMidX(_barGlass.frame), CGRectGetMidY(_barGlass.frame));
-    [self snapFromCenter:center inBounds:bounds];
+    [self snapToTopFromCenter:center inBounds:bounds];
     [self collapseAnimated];
 }
 
@@ -1053,7 +1077,7 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     [self invalidateCollapseTimer];
     // returning 标记与吸附状态同文件：库侧冷启动读到后首帧盖黑、淡出时清除
     NSMutableDictionary *state = LCQBLoadState();
-    state[@"edge"] = @(_edge);
+    state[@"edge"] = @(LCQBStoredEdgeTop);
     state[@"ratio"] = @(_ratio);
     state[@"returning"] = @YES;
     LCQBSaveState(state);
