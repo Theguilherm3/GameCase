@@ -272,7 +272,9 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 // 右侧抽屉面板（主页留在 ZStack 下层、被压暗且不可交互）、
                 // 竖屏 = 整屏；打开后旋转原地变形，页面状态与滚动不丢。
                 // 游戏设置内包 NavigationView，供页内子页（高级设置等）推进。
-                LCSidePanelContainer(isPresented: gameSettingsPanelItem != nil, onClose: { closeGameSettingsPanel() }) {
+                // 顶部声明 bleedsToTop（Phase 24）：封面故意出血、外包
+                // NavigationView 已把顶部安全区还给内容，宿主不垫。
+                LCSidePanelContainer(isPresented: gameSettingsPanelItem != nil, onClose: { closeGameSettingsPanel() }, topBehavior: .bleedsToTop) {
                     if let item = gameSettingsPanelItem {
                         NavigationView {
                             LCGameSettingsView(
@@ -284,6 +286,8 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                         .navigationViewStyle(StackNavigationViewStyle())
                     }
                 }
+                // 顶部声明用默认 contentManaged（Phase 24）：LCSettingsView
+                // 自带 NavigationView、顶部安全区由它自理，宿主不垫（防双算）。
                 LCSidePanelContainer(isPresented: containerSettingsPanelPresented, onClose: { containerSettingsPanelPresented = false }) {
                     LCSettingsView(onClose: { containerSettingsPanelPresented = false })
                 }

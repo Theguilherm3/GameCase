@@ -62,8 +62,35 @@
 //  NX 自身整屏形态同样无下滑关闭、只靠页内返回钮。面板形态的点压
 //  暗区 + 右滑拖动关闭照旧。
 //
+//  Phase 24（Phase 22 整屏形态的两处真机回归，宿主层修）：
+//  ①手柄页竖屏整屏时页题「手柄」顶到屏幕最上沿、与时钟重叠、X 钮
+//    贴电池——旧 .sheet 顶部的系统留白换自有宿主后丢失。②游戏设置
+//    页竖屏整屏时顶部两角变直角——旧 .sheet 的圆角同样丢失，他要求
+//    恢复圆角观感。两处都在宿主整屏分支修，不逐页打补丁：
+//  - 顶部安全区按页声明三态（LCSidePanelTopBehavior）：出血页（游戏
+//    设置：封面故意出血、内容外包 NavigationView 已把安全区还给内
+//    容、「‹ 游戏库」钮位现包正确）宿主不垫；内容自理页（容器设置：
+//    自带 NavigationView，同机制自理）宿主不垫（再垫必双算）；无自
+//    理页（手柄：无 NavigationView、无任何顶部处理，帧顶 = 物理顶）
+//    宿主在整屏形态把窗口顶部安全区垫回内容之上。
+//  - 顶部圆角：整屏形态整页块（含宿主页底色与封面出血图）以
+//    LCSheetTopClipShape 裁剪——圆角落在「内容实际顶缘」：整屏形态
+//    三页的内容顶缘都恰在窗口顶部安全区处（出血页 / 自理页由
+//    NavigationView 还原至此、无自理页由宿主垫至此），故圆角线 =
+//    帧顶 + 窗口顶部安全区；圆角线以上整幅纳入裁剪，宿主页底色在
+//    状态栏带的既有绘制不被裁掉。半径 22（Phase 24 规格：系统
+//    sheet 观感量级 20–24 取中）。面板形态不加圆角（贴右全高、NX
+//    本就直角）、不垫顶距。
+//  - 顶距数值源：窗口（keyWindow）safeAreaInsets.top 的 UIKit 真
+//    值。本工程带 .ignoresSafeArea() 的 GeometryReader 读到的
+//    safeAreaInsets 恒为 0（LCGameHomeView.swift:120-122 实证、主页
+//    靠外层注入同理），宿主自己的 reader 读不到，只能取窗口真值；
+//    该值随旋转逐布局更新，形态翻转时圆角 / 顶距按当前形态重算，
+//    不残留、不双算。
+//
 
 import SwiftUI
+import UIKit
 
 /// 「当前页处于 floating 侧面板形态」环境标记：自适应宿主按当前
 /// 形态现置（Phase 22 起不再是「打开时」常量——旋转翻转形态时此
@@ -101,6 +128,72 @@ enum LCSidePanelSpec {
     }
 }
 
+/// 页面顶部处理声明（Phase 24）：宿主整屏形态是否垫回顶部安全区，
+/// 判据 = 页面自己对顶部的处理方式，逐调用点声明：
+/// - bleedsToTop：内容故意出血到帧顶（游戏设置页封面头）；且其内容
+///   外包的 NavigationView 已把设备顶部安全区还给内容（「‹ 游戏库」
+///   钮位现包正确），宿主不垫、钮位不动。
+/// - contentManaged：内容自理顶部（容器设置页自带 NavigationView、
+///   同一机制把安全区还给其工具栏），宿主不垫——再垫必双算。
+/// - hostProvidesTopInset：内容对顶部毫无处理（手柄页：无
+///   NavigationView、标题行就是滚动内容第一行），宿主在整屏形态
+///   把窗口顶部安全区垫在内容之上，标题 / 关闭钮回到状态栏之下。
+enum LCSidePanelTopBehavior {
+    case bleedsToTop
+    case contentManaged
+    case hostProvidesTopInset
+}
+
+/// 整屏形态的 sheet 式顶部裁剪（Phase 24）：圆角只在顶部两角，
+/// 圆角线落在帧顶 + topEdgeOffset 处（整屏形态内容实际顶缘）；
+/// 圆角线以上整幅纳入（宿主页底色向状态栏带的出血绘制不被裁），
+/// 圆角线以下两侧直边到底（sheet 底缘即屏幕底缘、本就直角）。
+/// 圆角用二次曲线近似（控制点在角上），半径 22 内与真圆弧的偏差
+/// 肉眼不可辨，省去弧线角度约定。
+private struct LCSheetTopClipShape: Shape {
+    var cornerRadius: CGFloat
+    /// 圆角线距帧顶的距离（整屏形态 = 窗口顶部安全区）
+    var topEdgeOffset: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let r = max(0, min(cornerRadius, rect.width / 2))
+        let top = rect.minY + topEdgeOffset
+        // 向上延伸一整幅帧高：覆盖页底色 ignoresSafeArea 的出血绘制
+        let above = rect.minY - rect.height
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: above))
+        path.addLine(to: CGPoint(x: rect.maxX, y: above))
+        path.addLine(to: CGPoint(x: rect.maxX, y: top + r))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: top),
+                          control: CGPoint(x: rect.maxX, y: top))
+        path.addLine(to: CGPoint(x: rect.minX + r, y: top))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: top + r),
+                          control: CGPoint(x: rect.minX, y: top))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: above))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// 条件裁剪：面板形态不裁（贴右全高直角、页底色须画到物理屏缘，
+/// 裁到布局帧会切掉那段绘制）；整屏形态套 LCSheetTopClipShape。
+private struct LCSheetTopClipModifier: ViewModifier {
+    let active: Bool
+    let topEdgeOffset: CGFloat
+
+    func body(content: Content) -> some View {
+        Group {
+            if active {
+                content.clipShape(LCSheetTopClipShape(cornerRadius: 22, topEdgeOffset: topEdgeOffset))
+            } else {
+                content
+            }
+        }
+    }
+}
+
 /// 设置类页面的自适应宿主（Phase 22 起为三页在两形态下的唯一呈现
 /// 容器，结构照 NX LibraryView 的 settingsPane）：宿主在自己的
 /// ZStack 顶层放一层，isPresented 为 true 时按「当前」尺寸现算形态
@@ -110,6 +203,9 @@ enum LCSidePanelSpec {
 struct LCSidePanelContainer<Content: View>: View {
     var isPresented: Bool
     var onClose: () -> Void
+    /// 顶部处理声明（Phase 24，判据见 LCSidePanelTopBehavior）；
+    /// 默认 contentManaged：既有调用点（容器设置）行为不变
+    var topBehavior: LCSidePanelTopBehavior = .contentManaged
     @ViewBuilder var content: () -> Content
 
     /// 压暗区右滑拖动量：面板等量跟随（NX edgeDrag），松手按阈值决定去留
@@ -120,12 +216,27 @@ struct LCSidePanelContainer<Content: View>: View {
         reduceMotion ? nil : .timingCurve(0.22, 0.61, 0.36, 1, duration: 0.3)
     }
 
+    /// 窗口顶部安全区真值（UIKit，Phase 24）：宿主自己的
+    /// GeometryReader 带 .ignoresSafeArea()、其 safeAreaInsets 恒为
+    /// 0（见文件头 Phase 24 注），顶距 / 圆角线只能取窗口真值；
+    /// 随旋转逐布局重读，横屏（状态栏隐藏）时为 0
+    private var windowTopSafeInset: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }?.safeAreaInsets.top ?? 0
+    }
+
     var body: some View {
         GeometryReader { geo in
             let pane = LCSidePanelSpec.paneWidth(screenWidth: geo.size.width, screenHeight: geo.size.height)
             // 形态由当前尺寸决定（NX settingsFloat 的等价判定）：
             // pane 占满宿主宽即整屏形态，否则为 floating 面板
             let floating = pane < geo.size.width
+            // Phase 24：整屏形态的顶距与圆角线同源（窗口顶部安全区）；
+            // 顶距只垫给声明无自理的页，出血 / 自理页恒 0（不双算）
+            let topInset = windowTopSafeInset
+            let topPad: CGFloat = (!floating && topBehavior == .hostProvidesTopInset) ? topInset : 0
             ZStack(alignment: .trailing) {
                 if isPresented {
                     if floating {
@@ -140,6 +251,9 @@ struct LCSidePanelContainer<Content: View>: View {
                     }
 
                     content()
+                        // Phase 24：无自理页在整屏形态垫回顶部安全区
+                        // （垫在宿主页底色之内侧，垫出的一条仍是页底色）
+                        .padding(.top, topPad)
                         .frame(width: pane)
                         .frame(maxHeight: .infinity)
                         // 页底色铺满至屏幕边缘（NX ShellPalette.background 原值）
@@ -157,6 +271,10 @@ struct LCSidePanelContainer<Content: View>: View {
                                     .ignoresSafeArea()
                             }
                         }
+                        // Phase 24：整屏形态整页块套 sheet 式顶部圆角
+                        // （含页底色与封面出血图，圆角线 = 内容实际
+                        // 顶缘）；面板形态不裁（见 LCSheetTopClipModifier）
+                        .modifier(LCSheetTopClipModifier(active: !floating, topEdgeOffset: topInset))
                         .offset(x: dragOffset)
                         .environment(\.lcInSidePanel, floating)
                         .transition(floating
