@@ -202,25 +202,10 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         .navigationViewStyle(StackNavigationViewStyle())
         .preferredColorScheme(.dark)
         .sheet(isPresented: $containerSettingsPresented) {
-            // 关闭钮不在 LCSettingsView 里加：它那个 Form 表达式已逼近编译器
-            // 类型检查上限（往里加工具栏直接超时编译不过）；改在呈现层包一
-            // 层，左上角叠一个与工具栏同位的「关闭」钮盖在导航栏行上。
-            // 深链（证书类）也流经这一处，同样带按钮。
-            ZStack(alignment: .topLeading) {
-                LCSettingsView()
-                Button {
-                    containerSettingsPresented = false
-                } label: {
-                    Text("关闭")
-                        .font(.system(size: 16))
-                        .foregroundColor(.accentColor)
-                        .padding(.horizontal, 8)
-                        .frame(height: 36)
-                        .contentShape(Rectangle())
-                }
-                .padding(.leading, 8)
-                .padding(.top, 4)
-            }
+            // 关闭钮已进 LCSettingsView 自己的工具栏（与数据包导入页「取消」
+            // 同款 cancellationAction 胶囊钮，横竖屏都落在 sheet 标题行内），
+            // 呈现层不再叠加浮钮。深链（证书类）也流经这一处，同样带按钮。
+            LCSettingsView()
         }
         .onChange(of: sharedModel.selectedTab) { tab in
             // 底栏已摘除：证书等深链要求去设置页时，改以 sheet 呈现容器设置

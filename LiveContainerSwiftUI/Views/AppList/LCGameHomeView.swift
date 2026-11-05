@@ -1043,8 +1043,10 @@ struct LCHiddenAppsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // 本页以 sheet 呈现（列表层包 NavigationView）：右上给显式关闭钮，
-            // 也可以下滑关掉弹层
-            ToolbarItem(placement: .navigationBarTrailing) {
+            // 也可以下滑关掉弹层。放 confirmationAction 位——与数据包导入页
+            // 「取消」的 cancellationAction 正好成对，同为素 Button 无自加样式，
+            // 新系统渲染成与标题同行的圆角胶囊钮。
+            ToolbarItem(placement: .confirmationAction) {
                 Button("关闭") {
                     dismiss()
                 }
