@@ -14,7 +14,15 @@ import GameController
 
 struct LCControllersView: View {
     @ObservedObject var monitor: LCControllerMonitor
+    /// 横屏侧面板呈现时的关闭回调（Phase 14，主页注入）：面板不是系统
+    /// 呈现，dismiss 环境无效，关闭走此回调；nil = sheet 呈现，用
+    /// dismiss 关闭，与原来一致。
+    var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    /// 当前是否 floating 侧面板形态（宿主按当前形态现置）：整屏
+    /// 形态下本页要自己垫顶部安全区（见 body 的 topContentPad），
+    /// 面板形态恒不垫（面板贴右全高、顶部即其物理顶）
+    @Environment(\.lcInSidePanel) private var inSidePanel
     @State private var showTest = false
     /// 电量变化慢且 GameController 不发通知：30 秒重读一次（与 NX 壳适配器同策略）
     @State private var batteryTick = 0
@@ -60,6 +68,18 @@ struct LCControllersView: View {
         return (nil, false)
     }
 
+    /// 整屏形态的内容顶垫（Phase 26）：页面背景画满到物理顶、内容
+    /// （标题行 / X / 按键测试子页的返回钮）在背景内侧下移一个窗
+    /// 口顶部安全区，避开灵动岛。Phase 24 曾由宿主在内容外侧垫
+    /// （连宿主页底色带与圆角线一起），Phase 26 改由页面自垫：
+    /// 垫加在根 Group 上、背景修饰之前——背景按垫后的帧再
+    /// ignoresSafeArea 画满整帧，顶部那条是页面自己的底色而非宿
+    /// 主的。面板形态（inSidePanel）恒 0，现行面板内排布逐点不
+    /// 变；数值取窗口真值、逐次求值现读，旋转后即为新方向的值。
+    private var topContentPad: CGFloat {
+        inSidePanel ? 0 : LCSidePanelSpec.windowTopSafeInset
+    }
+
     var body: some View {
         Group {
             if showTest {
@@ -68,6 +88,7 @@ struct LCControllersView: View {
                 listPage
             }
         }
+        .padding(.top, topContentPad)
         .background(Self.background.ignoresSafeArea())
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
@@ -79,6 +100,11 @@ struct LCControllersView: View {
     // MARK: 列表页（NX ControllersView 本体）
 
     private var listPage: some View {
+        // 横屏定宽与游戏设置页同一层：LCSettingsColumn 把 ScrollView 本体
+        // 定宽 640 并居中（PR #10 在内容 VStack 上加 maxWidth、且外层照抄了
+        // NX 的 .leading 对齐，真机列宽 ≈668pt 还靠左贴边、右侧留死黑；
+        // 视口层定宽后列居中、宽度精确——见 LCSettingsColumn.swift）。
+        LCSettingsColumn { _ in
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
                 HStack(alignment: .center) {
@@ -89,7 +115,11 @@ struct LCControllersView: View {
                         .minimumScaleFactor(0.7)
                     Spacer(minLength: 8)
                     Button {
-                        dismiss()
+                        if let onClose {
+                            onClose()
+                        } else {
+                            dismiss()
+                        }
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 15, weight: .semibold))
@@ -108,10 +138,10 @@ struct LCControllersView: View {
                 buttonsSection
             }
             .padding(24)
-            .frame(maxWidth: 640)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .lcHideScrollIndicators()
+        }
     }
 
     private var emptyCard: some View {
