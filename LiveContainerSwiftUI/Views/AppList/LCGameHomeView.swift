@@ -986,9 +986,14 @@ struct LCGameHomeView: View {
     /// 阴影黑 0.5 / 半径卡宽 5% / y 卡宽 3%；左上状态点直径钳在
     /// 8…14（卡宽 3.4%）、内距 = 点径 0.9。非聚焦卡缺数据包时左下加
     /// LC 自己的琥珀胶囊（LC 语义，NX 无此件）。
-    private func landscapeCard(app: LCAppModel, cardW: CGFloat, isFocused: Bool) -> some View {
+    /// transformScale：调用方此前靠外层 scaleEffect 呈现的缩放比（shelf
+    /// 邻卡 0.8、聚焦与 carousel 恒 1）。按 cardW 成比例的部件（圆角 /
+    /// 阴影）折进渲染尺寸后自动等值，但状态点（带钳制）与琥珀胶囊
+    /// （固定字号 / 内距）不成比例，须按缩放比还原旧的有效尺寸；
+    /// 默认 1 时与旧口径逐点一致。
+    private func landscapeCard(app: LCAppModel, cardW: CGFloat, isFocused: Bool, transformScale: CGFloat = 1) -> some View {
         let ready = datapackReady(app)
-        let dot = max(8, min(14, cardW * 0.034))
+        let dot = max(8, min(14, (cardW / transformScale) * 0.034)) * transformScale
         return LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
             .frame(width: cardW, height: cardW * 9 / 16)
             .clipShape(RoundedRectangle(cornerRadius: cardW * 0.03, style: .continuous))
@@ -1002,18 +1007,18 @@ struct LCGameHomeView: View {
             }
             .overlay(alignment: .bottomLeading) {
                 if !isFocused && !ready {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 6 * transformScale) {
                         Circle()
                             .fill(LCGameTheme.missingAmber)
-                            .frame(width: 8, height: 8)
+                            .frame(width: 8 * transformScale, height: 8 * transformScale)
                         Text("缺数据包")
-                            .font(.system(size: 10.5, weight: .bold))
+                            .font(.system(size: 10.5 * transformScale, weight: .bold))
                             .foregroundColor(LCGameTheme.missingAmber)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, 10 * transformScale)
+                    .padding(.vertical, 5 * transformScale)
                     .background(Capsule().fill(Color(red: 24 / 255, green: 18 / 255, blue: 8 / 255).opacity(0.85)))
-                    .padding(10)
+                    .padding(10 * transformScale)
                 }
             }
             .shadow(color: .black.opacity(0.5), radius: cardW * 0.05, y: cardW * 0.03)
@@ -1023,47 +1028,65 @@ struct LCGameHomeView: View {
     /// （brightness -0.22），每张按 (序号 - 中位) × 卡宽 0.78 错位叠放；
     /// 横滑一格切一张（NX 手势门槛：最小距离 24、|dx| > 44 且 > |dy|×1.5），
     /// 两端停住不绕圈。单张时无邻卡、无错位，就是居中一张。
+    /// 定位走布局空间（Phase 15）：旧实现所有卡共用同一块居中布局帧、
+    /// 只靠 offset / scaleEffect 摆出渲染位置，命中区留在布局帧上——
+    /// 聚焦卡（zIndex 10 先命中）的命中矩形比它渲染出的右缘多探约
+    /// 0.39×卡宽，罩住邻卡可见区的内侧一大半，点邻卡会误启动聚焦款；
+    /// contextMenu 又挂在已变换的视图上，长按预览按布局帧取快照、
+    /// 内容被变换推偏裁切。现在缩放直接折进卡的渲染尺寸、落位用
+    /// position（布局锚点），每张卡的布局帧即渲染帧：命中形状与
+    /// 渲染形状一致、重叠区按 zIndex 归上层（聚焦卡）；菜单挂的就
+    /// 是这张未变换的卡，系统长按预览按其真实帧取快照、封面完整
+    /// （带 preview 的 contextMenu 写法要 iOS 16、部署目标 15 用不了，
+    /// 本法是其等价替代）。几何常量（卡宽封顶、0.78 步距、0.8 缩放、
+    /// -0.22 压暗、zIndex 规则）一律未动。
     private func landscapeShelf(list: [LCAppModel], metrics: LCLandscapeMetrics, width w: CGFloat) -> some View {
         let card = min(metrics.cover, w / (1 + CGFloat(list.count - 1) * 0.8))
         let chosen = landscapeFocusIndex(in: list)
-        return ZStack {
-            ForEach(list.indices, id: \.self) { idx in
-                let app = list[idx]
-                let isChosen = idx == chosen
-                landscapeCard(app: app, cardW: card, isFocused: isChosen)
-                    .scaleEffect(isChosen ? 1 : 0.8)
-                    .brightness(isChosen ? 0 : -0.22)
-                    .offset(x: (CGFloat(idx) - CGFloat(list.count - 1) / 2) * card * 0.78)
-                    .zIndex(isChosen ? 10 : -Double(abs(idx - chosen)))
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if isChosen {
-                            onRun(app)
-                        } else {
-                            setFocusFromDeck(app)
+        return GeometryReader { geo in
+            ZStack {
+                ForEach(list.indices, id: \.self) { idx in
+                    let app = list[idx]
+                    let isChosen = idx == chosen
+                    let scale: CGFloat = isChosen ? 1 : 0.8
+                    let renderedW = card * scale
+                    landscapeCard(app: app, cardW: renderedW, isFocused: isChosen, transformScale: scale)
+                        .brightness(isChosen ? 0 : -0.22)
+                        .contentShape(RoundedRectangle(cornerRadius: renderedW * 0.03, style: .continuous))
+                        .onTapGesture {
+                            if isChosen {
+                                onRun(app)
+                            } else {
+                                setFocusFromDeck(app)
+                            }
+                        }
+                        .contextMenu {
+                            gameContextMenu(for: app)
+                        }
+                        .position(
+                            x: geo.size.width / 2 + (CGFloat(idx) - CGFloat(list.count - 1) / 2) * card * 0.78,
+                            y: geo.size.height / 2
+                        )
+                        .zIndex(isChosen ? 10 : -Double(abs(idx - chosen)))
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 24)
+                    .onEnded { value in
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        guard list.count > 1, abs(dx) > 44, abs(dx) > abs(dy) * 1.5 else {
+                            return
+                        }
+                        let target = min(list.count - 1, max(0, chosen + (dx < 0 ? 1 : -1)))
+                        if target != chosen {
+                            setFocusFromDeck(list[target])
                         }
                     }
-                    .contextMenu {
-                        gameContextMenu(for: app)
-                    }
-            }
+            )
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 24)
-                .onEnded { value in
-                    let dx = value.translation.width
-                    let dy = value.translation.height
-                    guard list.count > 1, abs(dx) > 44, abs(dx) > abs(dy) * 1.5 else {
-                        return
-                    }
-                    let target = min(list.count - 1, max(0, chosen + (dx < 0 ? 1 : -1)))
-                    if target != chosen {
-                        setFocusFromDeck(list[target])
-                    }
-                }
-        )
     }
 
     /// 4 张起（NX carousel 的手势移植）：部署目标 15 用不了 NX 的
@@ -1087,6 +1110,14 @@ struct LCGameHomeView: View {
                     let near = max(-1, min(1, place))
                     let far = place > 1 ? place - 1 : place < -1 ? place + 1 : 0
                     landscapeCard(app: app, cardW: cover, isFocused: idx == focusIdx)
+                        // Phase 15 审计：命中走 position 布局落位（见
+                        // landscapeShelf 注释），无 shelf 的误启动病；
+                        // 菜单原挂在旋转 / 缩放之后的视图上、与 shelf
+                        // 的预览病同源，改挂到未变换的卡本体上——
+                        // 系统快照源即卡本身，变换全部留在菜单之外。
+                        .contextMenu {
+                            gameContextMenu(for: app)
+                        }
                         .rotation3DEffect(
                             .degrees(reduceMotion ? 0 : -near * 24),
                             axis: (x: 0, y: 1, z: 0),
@@ -1097,9 +1128,6 @@ struct LCGameHomeView: View {
                         .contentShape(Rectangle())
                         .onTapGesture {
                             carouselTap(app: app, index: idx, list: list, stride: stride)
-                        }
-                        .contextMenu {
-                            gameContextMenu(for: app)
                         }
                         .position(
                             x: w / 2 + place * stride - near * cover * 0.28 - far * cover * 0.55,
