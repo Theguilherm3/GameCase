@@ -15,8 +15,10 @@ struct LCGameSettingsView: View {
     @ObservedObject var app: LCAppModel
     var onRun: () -> Void
     var onOpenDataFolder: () -> Void
+    /// 关闭本页回到游戏库：本页是被列表用隐藏 NavigationLink 推进来的，
+    /// 只能走列表的 closeNavigationView 弹出，presentationMode.dismiss() 对 push 无效。
+    var onClose: () -> Void
 
-    @Environment(\.presentationMode) private var presentationMode
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
 
     @State private var prefs: LCGamePrefs?
@@ -91,7 +93,7 @@ struct LCGameSettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Button {
-                    presentationMode.wrappedValue.dismiss()
+                    onClose()
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
@@ -106,6 +108,10 @@ struct LCGameSettingsView: View {
                 }
                 Spacer()
                 Button {
+                    // 先退回游戏库再启动：启动流程要用的 JIT 确认 sheet 与错误弹窗都挂在
+                    // 列表视图上，本页盖在上面时它们弹不出来，启动会无声卡住；
+                    // 退回列表后与点卡片「启动」走完全同一条路。
+                    onClose()
                     onRun()
                 } label: {
                     Text("启动")

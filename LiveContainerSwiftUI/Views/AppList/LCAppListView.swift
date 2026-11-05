@@ -6,6 +6,7 @@
 //
 
 import Combine
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -148,7 +149,8 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 openNavigationView(view: AnyView(LCGameSettingsView(
                     app: app,
                     onRun: { runGame(app: app) },
-                    onOpenDataFolder: { openGameDataFolder(app: app) }
+                    onOpenDataFolder: { openGameDataFolder(app: app) },
+                    onClose: { closeNavigationView() }
                 )))
             },
             onImportDatapack: { datapackImportRequest = LCDatapackRequest(app: app) },
@@ -1420,8 +1422,80 @@ extension View {
 // MARK: - 游戏库封面信息（专用容器换皮）
 
 enum LCGameLibraryInfo {
-    /// 客体包内横幅大图候选文件名。命中即作 16:9 封面。
-    static let bannerCandidateNames = ["LCBanner.jpg", "LCBanner.png", "banner.jpg", "banner.png", "cover.jpg", "cover.png", "keyart.jpg", "keyart.png"]
+    /// 客体包内横版封面的候选文件名（按优先级排，大小写不敏感匹配 .app 根目录）。
+    static let bannerCandidateNames = ["LCBanner.jpg", "LCBanner.png", "banner.jpg", "banner.png", "cover.jpg", "cover.png", "keyart.jpg", "keyart.png", "header.jpg", "header.png", "capsule.jpg", "capsule.png", "hero.jpg", "hero.png", "poster.jpg", "poster.png", "artwork.jpg", "artwork.png"]
+
+    /// 客体 IPA 自带的横版封面：扫 .app 根目录的图片，先按候选名优先级找，
+    /// 再兜底取其余图片里面积最大的一张；每张都要过横版校验（宽>高、宽≥600、
+    /// 长宽比≤3），方形图标与细长条按钮图不会被误拿。名字/尺寸都不解码整图，
+    /// 先用 ImageIO 只读像素尺寸过滤，命中后才真正加载。
+    /// 注：我们两款 nxnative 客体包内实测没有横版图（根目录只有方形 AppIcon 与
+    /// 只含 AppIcon 的 Assets.car），此扫描主要为导入他人 IPA 时读对方自带封面。
+    static func guestLandscapeCover(for appInfo: LCAppInfo) -> UIImage? {
+        guard let bundlePath = appInfo.bundlePath(),
+              let entries = try? FileManager.default.contentsOfDirectory(atPath: bundlePath) else {
+            return nil
+        }
+        let imageExts: Set<String> = ["png", "jpg", "jpeg"]
+        let files = entries.filter {
+            imageExts.contains(($0 as NSString).pathExtension.lowercased())
+                && !$0.lowercased().hasPrefix("appicon")
+        }
+        guard !files.isEmpty else {
+            return nil
+        }
+        // 候选名优先（按 bannerCandidateNames 的顺序），其余按文件名排稳
+        let lowered = Dictionary(uniqueKeysWithValues: files.map { ($0.lowercased(), $0) })
+        var ordered: [String] = []
+        for candidate in bannerCandidateNames {
+            if let real = lowered[candidate.lowercased()] {
+                ordered.append(real)
+            }
+        }
+        let candidateSet = Set(ordered)
+        let rest = files.filter { !candidateSet.contains($0) }.sorted()
+        // 候选名逐个验；兜底组里取通过校验且面积最大的
+        for name in ordered {
+            if let image = landscapeImage(at: (bundlePath as NSString).appendingPathComponent(name)) {
+                return image
+            }
+        }
+        var best: (image: UIImage, area: Double)?
+        for name in rest {
+            let path = (bundlePath as NSString).appendingPathComponent(name)
+            guard let size = imagePixelSize(atPath: path), isLandscapeCoverSize(size) else {
+                continue
+            }
+            let area = size.width * size.height
+            if area > (best?.area ?? 0), let image = UIImage(contentsOfFile: path) {
+                best = (image, area)
+            }
+        }
+        return best?.image
+    }
+
+    /// 横版封面尺寸门槛：横向、够大、又不能是细长条
+    private static func isLandscapeCoverSize(_ size: CGSize) -> Bool {
+        return size.width > size.height && size.width >= 600 && size.width / size.height <= 3
+    }
+
+    private static func landscapeImage(at path: String) -> UIImage? {
+        guard let size = imagePixelSize(atPath: path), isLandscapeCoverSize(size) else {
+            return nil
+        }
+        return UIImage(contentsOfFile: path)
+    }
+
+    /// 只读图片像素尺寸（不整图解码）
+    private static func imagePixelSize(atPath path: String) -> CGSize? {
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let width = properties[kCGImagePropertyPixelWidth as String] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight as String] as? NSNumber else {
+            return nil
+        }
+        return CGSize(width: width.doubleValue, height: height.doubleValue)
+    }
 
     /// 宿主内置封面：LiveContainerSwiftUI/GameCovers/cover-<标题ID>.jpg，
     /// 该目录属 LiveContainerSwiftUI 同步根组，资源打进 LiveContainerSwiftUI.framework 的 bundle。
@@ -1457,20 +1531,11 @@ enum LCGameLibraryInfo {
     }
 
     static func bannerImage(for appInfo: LCAppInfo) -> UIImage? {
-        // 优先级：宿主内置原画封面 → 客体包内候选图 → nil（卡片再退回图标兜底）
-        if let bundled = bundledCoverImage(for: appInfo) {
-            return bundled
+        // 优先级：客体 IPA 自带横版封面 → 宿主内置原画 → nil（卡片再退回图标兜底）
+        if let guest = guestLandscapeCover(for: appInfo) {
+            return guest
         }
-        guard let bundlePath = appInfo.bundlePath() else {
-            return nil
-        }
-        for name in bannerCandidateNames {
-            let path = (bundlePath as NSString).appendingPathComponent(name)
-            if let image = UIImage(contentsOfFile: path) {
-                return image
-            }
-        }
-        return nil
+        return bundledCoverImage(for: appInfo)
     }
 
     static func defaultContainer(for app: LCAppModel) -> LCContainer? {

@@ -75,7 +75,10 @@ struct LCDatapackImportView: View {
                 target = request.app
             }
         }
-        .fileImporter(isPresented: $pickingFile, allowedContentTypes: [.data], allowsMultipleSelection: false) { result in
+        // 允许任意文件：.img 没有注册 UTI，用 [.data] 过滤会在文件选择器里把它置灰选不了
+        // （IPA 能选是因为宿主为 ipa/tipa 声明了专用类型）。选到后仍由 pickedFile 按
+        // 扩展名 == img 把关、startCopy 按大小校验，类型放宽不降低校验强度。
+        .fileImporter(isPresented: $pickingFile, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
             switch result {
             case .success(let urls):
                 if let url = urls.first {
