@@ -197,6 +197,8 @@ final class LCGamePrefs {
 
     private(set) var values: [String: Any] = [:]
     private var format: PropertyListSerialization.PropertyListFormat = .binary
+    /// 文件存在但解析失败：保留旧值且禁止落盘，避免按残缺内容回写清掉客体全部偏好
+    private var loadFailed = false
 
     init(container: LCContainer, bundleIdentifier: String) {
         self.container = container
@@ -206,29 +208,62 @@ final class LCGamePrefs {
 
     func reload() {
         guard let data = try? Data(contentsOf: prefsURL) else {
+            // 文件还不存在（客体没跑过）：空档案是正常起点
             values = [:]
             format = .binary
+            loadFailed = false
             return
         }
         var fmt: PropertyListSerialization.PropertyListFormat = .binary
         if let dict = (try? PropertyListSerialization.propertyList(from: data, format: &fmt)) as? [String: Any] {
             values = dict
             format = fmt
+            loadFailed = false
+        } else {
+            loadFailed = true
         }
     }
 
     @discardableResult
     func save() -> Bool {
+        guard !loadFailed else { return false }
         do {
             try FileManager.default.createDirectory(
                 at: prefsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let data = try PropertyListSerialization.data(
                 fromPropertyList: values, format: format, options: 0)
-            try data.write(to: prefsURL, options: .atomic)
-            return true
+            // 原地写（同一文件截断重写），不要 .atomic 的改名替换：客体启动器经
+            // UserDefaults/CFPreferences 读这份 plist，偏好系统按文件跟踪域内容，
+            // 换文件会让它继续按旧内容生效；而客体每次启动时 LauncherModel.apply()
+            // 又会拿它读到的值回写整个域——库内改动就是这样被「改回去」的，
+            // 读通写不通。原地写保证跟踪方看到的是同一文件的原地变更；写后再
+            // 读回逐键校验，不一致就重写一次，落盘内容必须与内存一致才算成功。
+            for _ in 0..<2 {
+                if FileManager.default.fileExists(atPath: prefsURL.path) {
+                    let handle = try FileHandle(forWritingTo: prefsURL)
+                    try handle.truncate(atOffset: 0)
+                    try handle.write(contentsOf: data)
+                    try handle.synchronize()
+                    try? handle.close()
+                } else {
+                    try data.write(to: prefsURL)
+                }
+                if diskMatchesValues() { return true }
+            }
+            return false
         } catch {
             return false
         }
+    }
+
+    /// 落盘内容是否与内存中的 values 逐键一致（写路径自检）
+    private func diskMatchesValues() -> Bool {
+        guard let data = try? Data(contentsOf: prefsURL) else { return false }
+        var fmt: PropertyListSerialization.PropertyListFormat = .binary
+        guard let parsed = (try? PropertyListSerialization.propertyList(from: data, format: &fmt)) as? [String: Any] else {
+            return false
+        }
+        return NSDictionary(dictionary: parsed) == NSDictionary(dictionary: values)
     }
 
     /// 启动器已保存的选择（字符串；数字按字符串读，与 LauncherSettings 的读法一致）

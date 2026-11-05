@@ -49,6 +49,12 @@ void NUDGuestHooksInit(void) {
 
     [sources removeObjectForKey:@"C/A//B/L"];
     [sources removeObjectForKey:@"C/C//*/L"];
+    // 再把其余来源一并逐出：宿主 UI 对客体偏好是直写 plist 文件的（LCGamePrefs），
+    // 进程内残留的旧 plist 来源会让客体启动器读到旧值、并在启动 apply() 时把旧值
+    // 回写覆盖库内新值（读通写不通）。上面两个键是上游已知的当前应用来源，这里
+    // 扩到全部，强制客体阶段的每次偏好读取都按磁盘现状重建来源。本 fork 串行
+    // 单开、客体退出即进程重拉回库，宿主域来源在下次访问时按磁盘重建，无回滚风险。
+    [sources removeAllObjects];
     
     // replace _CFPrefsCurrentAppIdentifierCache so kCFPreferencesCurrentApplication refers to the guest app
     const char* coreFoundationPath = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
