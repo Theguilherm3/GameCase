@@ -1407,11 +1407,47 @@ extension View {
 // MARK: - 游戏库封面信息（专用容器换皮）
 
 enum LCGameLibraryInfo {
-    /// 客体包内横幅大图候选文件名。命中即作 16:9 封面；
-    /// Phase 2 预留扩展点：可在此按 bundle id / 游戏 ID 匹配宿主内置或导入的横幅资源。
+    /// 客体包内横幅大图候选文件名。命中即作 16:9 封面。
     static let bannerCandidateNames = ["LCBanner.jpg", "LCBanner.png", "banner.jpg", "banner.png", "cover.jpg", "cover.png", "keyart.jpg", "keyart.png"]
 
+    /// 宿主内置封面：LiveContainerSwiftUI/GameCovers/cover-<标题ID>.jpg，
+    /// 该目录属 LiveContainerSwiftUI 同步根组，资源打进 LiveContainerSwiftUI.framework 的 bundle。
+    static func bundledCoverImage(for appInfo: LCAppInfo) -> UIImage? {
+        guard let titleId = titleId(from: appInfo) else {
+            return nil
+        }
+        let resourceName = "cover-\(titleId)"
+        // 先本模块 framework 的 bundle（LCAppModel 为本模块类作锚），再兜底主 app bundle；
+        // 同步组资源一般摊平在 bundle 根，也兼容 GameCovers 子目录形态。
+        for bundle in [Bundle(for: LCAppModel.self), Bundle.main] {
+            for subdirectory in [nil, "GameCovers"] {
+                if let url = bundle.url(forResource: resourceName, withExtension: "jpg", subdirectory: subdirectory),
+                   let image = UIImage(contentsOfFile: url.path) {
+                    return image
+                }
+            }
+        }
+        return nil
+    }
+
+    /// 从客体 bundle id 提取标题 ID：形如 org.nxnative.010013c00e930000，末段 16 位十六进制即标题 ID（大小写归一为大写）。
+    static func titleId(from appInfo: LCAppInfo) -> String? {
+        guard let bundleId = appInfo.bundleIdentifier()?.lowercased() else {
+            return nil
+        }
+        let components = bundleId.split(separator: ".").map(String.init)
+        let isTitleId: (String) -> Bool = { $0.count == 16 && $0.allSatisfy(\.isHexDigit) }
+        if let last = components.last, isTitleId(last) {
+            return last.uppercased()
+        }
+        return components.first(where: isTitleId)?.uppercased()
+    }
+
     static func bannerImage(for appInfo: LCAppInfo) -> UIImage? {
+        // 优先级：宿主内置原画封面 → 客体包内候选图 → nil（卡片再退回图标兜底）
+        if let bundled = bundledCoverImage(for: appInfo) {
+            return bundled
+        }
         guard let bundlePath = appInfo.bundlePath() else {
             return nil
         }
