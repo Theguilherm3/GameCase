@@ -51,6 +51,10 @@ struct LCLegacySheetItem: Identifiable {
 
 struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     @State var didAppear = false
+    // 快捷栏回库淡入：游戏内点「游戏库」时 LCBootstrap 在宿主容器 plist 写 returning
+    // 标记并盖黑遮罩自拉起；本视图冷启动读到标记则首帧盖黑、0.3s 淡出后清除标记。
+    @State private var returnFadeVisible = false
+    @State private var returnFadeOpacity: Double = 0
     // ipa choosing stuff
     @State var choosingIPA = false
     @State var errorShow = false
@@ -113,6 +117,37 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     }
     init() {
         _installOptions = State(initialValue: [])
+        // 首帧就要盖黑，标记必须在视图首次渲染前读到，故在 init 里定初值
+        let returning = Self.quickBarReturningMarker()
+        _returnFadeVisible = State(initialValue: returning)
+        _returnFadeOpacity = State(initialValue: returning ? 1 : 0)
+    }
+
+    /// 快捷栏状态文件：与 LCBootstrap 同一路径（宿主容器 Library/Preferences/LCQuickBar.plist）
+    static var quickBarStatePath: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent("Library/Preferences/LCQuickBar.plist")
+    }
+
+    static func quickBarReturningMarker() -> Bool {
+        (NSDictionary(contentsOfFile: quickBarStatePath)?["returning"] as? Bool) ?? false
+    }
+
+    static func clearQuickBarReturningMarker() {
+        guard let state = NSMutableDictionary(contentsOfFile: quickBarStatePath) else { return }
+        state["returning"] = false
+        state.write(toFile: quickBarStatePath, atomically: true)
+    }
+
+    /// 消费 returning 标记：清标记后把黑遮罩 0.3s 淡出（普通冷启动无标记时不触发）
+    func consumeReturnFade() {
+        guard returnFadeVisible else { return }
+        Self.clearQuickBarReturningMarker()
+        withAnimation(.easeOut(duration: 0.3)) {
+            returnFadeOpacity = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            returnFadeVisible = false
+        }
     }
 
     var uninstallDialogTitle: String {
@@ -190,6 +225,25 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                         onOpenContainerSettings: { containerSettingsPresented = true }
                     )
                 }
+
+                // 回库淡入遮罩：与游戏内回库黑遮罩同款（黑底 + 房子图标 + 「游戏库」），
+                // 盖住进程重启接缝，出现后由 consumeReturnFade 淡出。不拦截触摸。
+                if returnFadeVisible {
+                    ZStack {
+                        Color.black
+                        VStack(spacing: 8) {
+                            Image(systemName: "house")
+                                .font(.system(size: 38, weight: .light))
+                            Text("游戏库")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(Color(white: 0.75))
+                        }
+                    }
+                    .foregroundColor(Color(white: 0.9))
+                    .ignoresSafeArea()
+                    .opacity(returnFadeOpacity)
+                    .allowsHitTesting(false)
+                }
             }
             .navigationBarHidden(true)
             .navigationBarProgressBar(show: $installprogressVisible, progress: $installProgressPercentage)
@@ -197,6 +251,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 if !didAppear {
                     onAppear()
                 }
+                consumeReturnFade()
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
