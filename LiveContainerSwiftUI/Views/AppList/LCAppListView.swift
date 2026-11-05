@@ -219,6 +219,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                         installProgressVisible: installprogressVisible,
                         installProgress: installProgressPercentage,
                         safeAreaInsets: proxy.safeAreaInsets,
+                        safeSize: proxy.size,
                         refreshToken: libraryRefresh,
                         onRun: { runGame(app: $0) },
                         onSettings: { openGameSettings(app: $0) },
