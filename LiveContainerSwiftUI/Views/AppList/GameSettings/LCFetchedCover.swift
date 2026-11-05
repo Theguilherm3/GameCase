@@ -26,8 +26,11 @@
 //  负缓存时间戳，7 天内不重试；全程静默，失败不打扰用户。抓不到的游戏
 //  由主页大卡的无图兜底美化接住（LCGameCoverView.beautifiedFallback）。
 //
-//  兜底路线（2026-11-06 实测）：标题 ID 在 ec 解析器里没有条目时（区域
-//  独立全量包等），ID 路线必然失败，改用客体显示名走 nintendo.com 商店
+//  兜底路线（2026-11-06 实测）：两类情况 ID 路线走不通——标题 ID 在 ec
+//  解析器里没有条目（区域独立全量包等）；或客体 bundle ID 里根本没有
+//  标题 ID 段、提取为空（如非 org.nxnative.<id> 形态打包的 IPA，合金
+//  装备 4 一案：其 ID 路线本身全绿、商店侧无问题，是入口在 titleId==nil
+//  时直接 return 把抓取整个掐断）。两类都改用客体显示名走 nintendo.com 商店
 //  搜索（Algolia，配置取自官网前端公开的仅搜索 key，索引
 //  store_game_en_us）→ 名称精确 / 近似全等命中的商品页 → 同一
 //  linkedData 提取与验收门槛。以撒 Repentance（010021C000222000，
@@ -165,14 +168,19 @@ final class LCCoverFetchService: @unchecked Sendable {
 
     // MARK: 入口
 
-    /// 去重抓取入口：已有更高优先封面 / 已有抓取缓存 / 负缓存新鲜 / 无标题
-    /// ID 时直接返回；同一游戏在飞时只登记等待者，不重复发请求。
+    /// 去重抓取入口：已有更高优先封面 / 已有抓取缓存 / 负缓存新鲜时直接
+    /// 返回；同一游戏在飞时只登记等待者，不重复发请求。标题 ID 允许为空
+    /// （见下），为空时跳过 ID 路线、直接走按名搜索兜底。
     /// completion 仅在本次（或在飞的那次）抓取成功时于主线程回调一次。
     func ensureFetched(appInfo: LCAppInfo, completion: (() -> Void)? = nil) {
-        guard let bundleIdentifier = appInfo.bundleIdentifier(),
-              let titleId = LCGameLibraryInfo.titleId(from: appInfo) else {
+        guard let bundleIdentifier = appInfo.bundleIdentifier() else {
             return
         }
+        // 标题 ID 是从 bundle ID 的点分段里找 16 位十六进制段得来的；
+        // bundle ID 不含该段的客体（如非 org.nxnative.<id> 形态打包的
+        // IPA）提取为空——这类游戏没有 ID 路线可走，但不应因此连名搜
+        // 兜底都轮不到（合金装备 4 一案的结构性嫌疑即在此）。
+        let titleId = LCGameLibraryInfo.titleId(from: appInfo)
         if LCFetchedCoverStore.exists(forBundleIdentifier: bundleIdentifier) {
             return
         }
@@ -237,12 +245,14 @@ final class LCCoverFetchService: @unchecked Sendable {
 
     // MARK: 抓取实现（已验通的任天堂官方链）
 
-    /// 抓取编排：ID 路线先行（ec.nintendo.com/apps/<标题ID>/US → 商品页 →
-    /// linkedData.image → 图，本来就通的游戏行为与改前逐字一致）；ID 路线
-    /// 失败（404 / 页内无合格图）才走按名搜索兜底。任一路线成功即返回；
-    /// 整链失败返回 nil（由调用方记负缓存），全程静默。
-    private func fetchStoreCover(titleId: String, displayName: String) async -> UIImage? {
-        if let pageURL = URL(string: "https://ec.nintendo.com/apps/\(titleId)/US"),
+    /// 抓取编排：有标题 ID 时 ID 路线先行（ec.nintendo.com/apps/<标题ID>/US
+    /// → 商品页 → linkedData.image → 图，本来就通的游戏行为与改前逐字
+    /// 一致）；ID 路线失败（404 / 页内无合格图）、或压根没有标题 ID 时，
+    /// 走按名搜索兜底。任一路线成功即返回；整链失败返回 nil（由调用方记
+    /// 负缓存），全程静默。
+    private func fetchStoreCover(titleId: String?, displayName: String) async -> UIImage? {
+        if let titleId,
+           let pageURL = URL(string: "https://ec.nintendo.com/apps/\(titleId)/US"),
            let image = await fetchCoverImage(fromProductPage: pageURL, requiredPageName: nil) {
             return image
         }
