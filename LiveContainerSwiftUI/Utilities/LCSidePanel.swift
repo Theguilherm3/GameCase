@@ -47,8 +47,9 @@ import SwiftUI
 /// 「当前页处于横屏侧面板内」环境标记：面板容器在内容上置 true。
 /// LCSettingsColumn 读到它时把横屏 640 列退化为全宽填充，并把
 /// isLandscape 恒置 true（面板内页自身宽 < 高是常态——如手机横屏
-/// 面板 410×430——若按页自身宽高判横竖，游戏设置页头部会误落到
-/// 竖屏图标头；横屏语义应由呈现形态决定，不由面板内尺寸决定）。
+/// 面板 410×430——横竖屏语义应由呈现形态决定，不由面板内尺寸
+/// 决定；游戏设置页头部 Phase 14 起已全形态统一为图标头，此标记
+/// 现主要保住列宽退化与任何按 isLandscape 分支的页内语义）。
 private struct LCInSidePanelKey: EnvironmentKey {
     static let defaultValue = false
 }

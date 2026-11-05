@@ -66,10 +66,10 @@ struct LCGameSettingsView: View {
         // 逐点一致。PR #10 把 .frame(maxWidth: 640) 加在滚动内容 VStack 上，
         // 真机落点 ≈669pt 且各页不一致——内容的帧不治理滚动视口宽度，本轮
         // 改到视口层（详见 LCSettingsColumn.swift 的注释）。
-        LCSettingsColumn { isLandscape in
+        LCSettingsColumn { _ in
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                header(isLandscape: isLandscape)
+                header()
                     .fullScreenCover(item: $cropItem) { item in
                         NavigationView {
                             LCCoverCropView(image: item.image) { cropped in
@@ -179,25 +179,17 @@ struct LCGameSettingsView: View {
         }
     }
 
-    // MARK: 头部（横屏：封面条 + 标题与副标题；竖屏：应用图标行；关闭走工具栏左上角「取消」，见 body 的 toolbar）
+    // MARK: 头部（全形态统一：应用图标行——桌面图标靠左、右侧游戏名与副标题；
+    // 关闭走工具栏左上角「取消」，见 body 的 toolbar）
 
-    @ViewBuilder
-    private func header(isLandscape: Bool) -> some View {
-        if isLandscape {
-            VStack(alignment: .leading, spacing: 14) {
-                coverStrip
-                titleBlock
-            }
-            .padding(.top, 8)
-        } else {
-            // 竖屏不用 16:9 宽封面条：桌面图标靠左、右侧游戏名与副标题，
-            // 按 iOS 设置页常见的图标头规格（图标 62pt、圆角 14、图文间距 14）
-            HStack(spacing: 14) {
-                appIconHeader
-                titleBlock
-            }
-            .padding(.top, 8)
+    private func header() -> some View {
+        // 横竖屏（含横屏侧面板）统一图标头，不再用 16:9 宽封面条（用户定，
+        // Phase 14 追加）：图标 62pt、圆角 14、图文间距 14，iOS 设置页规格
+        HStack(spacing: 14) {
+            appIconHeader
+            titleBlock
         }
+        .padding(.top, 8)
     }
 
     private var titleBlock: some View {
@@ -211,51 +203,28 @@ struct LCGameSettingsView: View {
         }
     }
 
-    /// 竖屏头部图标：游戏的桌面图标原图（与主页图标、封面条无横图时的回退同源）
+    /// 头部图标：游戏的桌面图标原图（与主页图标同源），按系统图标规格处理：
+    /// 图标源图是方角的，圆角必须硬裁在图像本体上（旧写法把 clipShape 挂在
+    /// 外层 Group/帧上，真机四角露出源图白边）；裁后再叠一圈内描边发丝线
+    /// （white 0.12，系统设置页图标同款）兜住抗锯齿边缘，深色底上四角无白点。
     private var appIconHeader: some View {
-        Group {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        return Group {
             if let icon = app.appInfo.iconIsDarkIcon(darkModeIcon) {
                 Image(uiImage: icon)
                     .resizable()
                     .scaledToFill()
+                    .frame(width: 62, height: 62)
+                    .clipShape(shape)
             } else {
                 Rectangle().fill(Color.white.opacity(0.06))
+                    .frame(width: 62, height: 62)
+                    .clipShape(shape)
             }
         }
-        .frame(width: 62, height: 62)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .clipped()
-    }
-
-    @ViewBuilder
-    private var coverStrip: some View {
-        // 读 coverRefresh 使换/删自定义封面后本条立即重解（解析链无缓存，现读磁盘）
-        let _ = coverRefresh
-        Group {
-            if let banner = LCGameLibraryInfo.bannerImage(for: app.appInfo) {
-                Image(uiImage: banner)
-                    .resizable()
-                    .scaledToFill()
-            } else if let icon = app.appInfo.iconIsDarkIcon(darkModeIcon) {
-                ZStack {
-                    Image(uiImage: icon)
-                        .resizable()
-                        .scaledToFill()
-                        .blur(radius: 24)
-                        .opacity(0.75)
-                    Image(uiImage: icon)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(10)
-                }
-            } else {
-                Rectangle().fill(Color.white.opacity(0.06))
-            }
+        .overlay {
+            shape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 120)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .clipped()
     }
 
     // MARK: 游戏（只读信息行）
