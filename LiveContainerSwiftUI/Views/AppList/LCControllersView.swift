@@ -111,7 +111,7 @@ struct LCControllersView: View {
             .frame(maxWidth: 640)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .scrollIndicators(.hidden)
+        .lcHideScrollIndicators()
     }
 
     private var emptyCard: some View {
@@ -265,7 +265,7 @@ private struct LCControllerTestView: View {
         var up = false, down = false, left = false, right = false
         var l1 = false, r1 = false
         var l2: Float = 0, r2: Float = 0
-        var menu = false, options = false, home = false, capture = false
+        var menu = false, options = false, home = false
         var l3 = false, r3 = false
         var ls = CGPoint.zero, rs = CGPoint.zero
     }
@@ -331,7 +331,7 @@ private struct LCControllerTestView: View {
             .padding(16)
             .frame(maxWidth: .infinity)
         }
-        .scrollIndicators(.hidden)
+        .lcHideScrollIndicators()
         .onReceive(tick) { _ in
             refresh()
         }
@@ -450,7 +450,6 @@ private struct LCControllerTestView: View {
             }
             HStack(spacing: 8) {
                 miniChip(label: "主页", pressed: s.home)
-                miniChip(label: "截图", pressed: s.capture)
             }
         }
     }
@@ -514,7 +513,6 @@ private struct LCControllerTestView: View {
         if s.menu { names.append("菜单") }
         if s.options { names.append("选项") }
         if s.home { names.append("主页") }
-        if s.capture { names.append("截图") }
         return names.isEmpty ? "未按任何按键" : names.joined(separator: " + ")
     }
 
@@ -541,7 +539,6 @@ private struct LCControllerTestView: View {
             s.menu = pad.buttonMenu.isPressed
             s.options = pad.buttonOptions?.isPressed ?? false
             s.home = pad.buttonHome?.isPressed ?? false
-            s.capture = pad.captureButton?.isPressed ?? false
             s.l3 = pad.leftThumbstickButton?.isPressed ?? false
             s.r3 = pad.rightThumbstickButton?.isPressed ?? false
             s.ls = CGPoint(x: CGFloat(pad.leftThumbstick.xAxis.value), y: CGFloat(-pad.leftThumbstick.yAxis.value))
@@ -559,5 +556,16 @@ private struct LCControllerTestView: View {
             return
         }
         snapshot = s
+    }
+}
+
+private extension View {
+    /// scrollIndicators 是 iOS 16 API，工程部署目标 15，分开守卫
+    @ViewBuilder func lcHideScrollIndicators() -> some View {
+        if #available(iOS 16.0, *) {
+            self.scrollIndicators(.hidden)
+        } else {
+            self
+        }
     }
 }
