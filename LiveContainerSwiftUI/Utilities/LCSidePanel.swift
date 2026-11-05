@@ -79,6 +79,14 @@
 //    bannerHeight + topInset，坐标换算见 LCGameSettingsView 头部
 //    注释），信息簇与「‹ 游戏库」钮相对安全区位置不变，状态栏
 //    scrim 按 NX 原规格补回；
+//  Phase 28（Phase 26 的游戏页出血真机失效，跟进）：背景层的
+//  .ignoresSafeArea(edges: .top) 在真机上没生效——外包
+//  NavigationView 已把顶部 inset 解析进内容布局帧、到达头部时
+//  继承值已是 0（协商被吃），且背景身处 ScrollView 视口内、纵
+//  使扩得出也会被视口顶缘裁掉。改显式几何：头内背景 offset 上
+//  移 + 绘制总高加 topInset 定死映射，安全线以上一带另由页面
+//  根（ScrollView 之外）的同体出血条补画并随滚动同速移动，详
+//  见 LCGameSettingsView 封面头 Phase 28 注。宿主仍零参与。
 //  - 手柄页：页面背景画满整帧，内容（标题行 / X / 按键测试子页）
 //    在页面背景内侧按窗口顶部安全区下移（页面自己垫，不再由宿
 //    主外垫）；
