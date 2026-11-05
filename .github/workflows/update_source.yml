@@ -53,7 +53,39 @@ jobs:
         if [ -z "$TAG" ]; then
           TAG=$(gh api "repos/${{ github.repository }}/releases" --jq '[.[] | select(.draft == false and .prerelease == false and .tag_name != "nightly")][0].tag_name // empty')
         fi
-        gh release upload "$TAG" .github/apps.json .github/apps_ss_lc.json --clobber
+        # Idempotent upload: delete any same-named asset first and wait until the
+        # name is actually freed, then upload the fresh copy. A bare
+        # `gh release upload --clobber` races GitHub's asynchronous asset
+        # deletion and can fail with 422 "ReleaseAsset.name already exists"
+        # (seen on the v1.0.1 run) even though the content is fine.
+        REPO="${{ github.repository }}"
+        RELEASE_ID=$(gh api "repos/$REPO/releases/tags/$TAG" --jq '.id')
+        upload_one() {
+          local file="$1"
+          local name=$(basename "$file")
+          local attempt asset_id wait_i remaining
+          for attempt in 1 2 3; do
+            asset_id=$(gh api "repos/$REPO/releases/$RELEASE_ID/assets" --jq "[.[] | select(.name == \"$name\")][0].id // empty")
+            if [ -n "$asset_id" ]; then
+              gh api -X DELETE "repos/$REPO/releases/assets/$asset_id"
+              for wait_i in $(seq 1 12); do
+                remaining=$(gh api "repos/$REPO/releases/$RELEASE_ID/assets" --jq "[.[] | select(.name == \"$name\")][0].id // empty")
+                if [ -z "$remaining" ]; then
+                  break
+                fi
+                sleep 5
+              done
+            fi
+            if gh release upload "$TAG" "$file"; then
+              return 0
+            fi
+            sleep 5
+          done
+          echo "ERROR: failed to upload $name after multiple attempts" >&2
+          return 1
+        }
+        upload_one .github/apps.json
+        upload_one .github/apps_ss_lc.json
 
     - name: Calculate job duration
       id: duration
