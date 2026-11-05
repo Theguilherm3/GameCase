@@ -72,10 +72,16 @@ struct LCSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     
     @State private var isViewAppeared = false
-    
+
+    /// 横屏侧面板呈现时的关闭回调（Phase 14，列表层注入）：面板不是系统
+    /// 呈现，dismiss 环境无效，关闭走此回调；nil = sheet 呈现，用
+    /// dismiss 关闭，与原来一致。
+    let onClose: (() -> Void)?
+
     let storeName = LCUtils.getStoreName()
-    
-    init() {
+
+    init(onClose: (() -> Void)? = nil) {
+        self.onClose = onClose
         _certificateDataFound = State(initialValue: LCSharedUtils.certificatePassword() != nil)
         _store = State(initialValue: LCUtils.store())
     }
@@ -98,7 +104,11 @@ struct LCSettingsView: View {
                     // 故 Form 先收进独立计算属性 settingsForm，工具栏只挂 body 的小表达式。
                     ToolbarItem(placement: .cancellationAction) {
                         Button("关闭") {
-                            dismiss()
+                            if let onClose {
+                                onClose()
+                            } else {
+                                dismiss()
+                            }
                         }
                     }
                 }
