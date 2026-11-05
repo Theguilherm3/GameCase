@@ -71,8 +71,8 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     @State private var navigateTo : AnyView?
     @State private var isNavigationActive = false
 
-    // 游戏库换皮：数据包导入提示（Phase 2 才接导入逻辑）与卸载确认
-    @State var datapackHintShow = false
+    // 游戏库换皮：数据包导入（Phase 2 接通）与卸载确认
+    @State var datapackImportRequest: LCDatapackRequest? = nil
     @State var appPendingUninstall: LCAppModel? = nil
     
     @State private var helpPresent = false
@@ -144,7 +144,14 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
             app: app,
             onRun: { runGame(app: app) },
             onOpenDataFolder: { openGameDataFolder(app: app) },
-            onSettings: { openNavigationView(view: AnyView(LCAppSettingsView(model: app))) },
+            onSettings: {
+                openNavigationView(view: AnyView(LCGameSettingsView(
+                    app: app,
+                    onRun: { runGame(app: app) },
+                    onOpenDataFolder: { openGameDataFolder(app: app) }
+                )))
+            },
+            onImportDatapack: { datapackImportRequest = LCDatapackRequest(app: app) },
             onUninstall: { appPendingUninstall = app }
         )
     }
@@ -167,8 +174,16 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         )
     }
     
+    /// 游戏列表列定义：横屏（宽>高）两列并排，竖屏单列
+    func gridColumns(for size: CGSize) -> [GridItem] {
+        let columnCount = size.width > size.height ? 2 : 1
+        return Array(repeating: GridItem(.flexible(), spacing: 16), count: columnCount)
+    }
+
     var body: some View {
         NavigationView {
+            GeometryReader { geometry in
+                let gameColumns = gridColumns(for: geometry.size)
             ScrollView {
                 NavigationLink(
                     destination: navigateTo,
@@ -178,7 +193,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 })
                 .hidden()
                 
-                LazyVStack(spacing: 16) {
+                LazyVGrid(columns: gameColumns, spacing: 16) {
                     ForEach(filteredApps, id: \.self) { app in
                         gameCard(app: app)
                     }
@@ -197,11 +212,13 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                                     Spacer()
                                 }
                                 
-                                ForEach(filteredHiddenApps, id: \.self) { app in
-                                    gameCard(app: app)
+                                LazyVGrid(columns: gameColumns, spacing: 16) {
+                                    ForEach(filteredHiddenApps, id: \.self) { app in
+                                        gameCard(app: app)
+                                    }
+                                    .transition(.scale)
                                 }
-                                .transition(.scale)
-                                
+
                             }
                             .padding()
                             .transition(.opacity)
@@ -219,11 +236,13 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                                     .font(.system(.title2).bold())
                                 Spacer()
                             }
-                            ForEach(filteredHiddenApps, id: \.self) { app in
-                                if sharedModel.isHiddenAppUnlocked {
-                                    gameCard(app: app)
-                                } else {
-                                    LCAppSkeletonBanner()
+                            LazyVGrid(columns: gameColumns, spacing: 16) {
+                                ForEach(filteredHiddenApps, id: \.self) { app in
+                                    if sharedModel.isHiddenAppUnlocked {
+                                        gameCard(app: app)
+                                    } else {
+                                        LCAppSkeletonBanner()
+                                    }
                                 }
                             }
                             .animation(.easeInOut, value: sharedModel.isHiddenAppUnlocked)
@@ -253,7 +272,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                             importButtonLabel(title: "+ 导入 IPA", subtitle: "游戏本体 · 自动签名入库")
                         }
                         Button {
-                            datapackHintShow = true
+                            datapackImportRequest = LCDatapackRequest(app: nil)
                         } label: {
                             importButtonLabel(title: "+ 导入数据包", subtitle: "romfs.img · 选完自动对号")
                         }
@@ -349,13 +368,12 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                     }
                 }
             }
+            }
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .preferredColorScheme(.dark)
-        .alert("导入数据包", isPresented: $datapackHintShow) {
-            Button("lc.common.ok".loc, action: {})
-        } message: {
-            Text("romfs.img 数据包导入将在下一版本提供。")
+        .sheet(item: $datapackImportRequest) { request in
+            LCDatapackImportView(request: request, apps: sharedModel.apps + sharedModel.hiddenApps)
         }
         .confirmationDialog(uninstallDialogTitle, isPresented: uninstallDialogPresented, titleVisibility: .visible) {
             Button("卸载（保留数据）", role: .destructive) {
@@ -1402,11 +1420,47 @@ extension View {
 // MARK: - 游戏库封面信息（专用容器换皮）
 
 enum LCGameLibraryInfo {
-    /// 客体包内横幅大图候选文件名。命中即作 16:9 封面；
-    /// Phase 2 预留扩展点：可在此按 bundle id / 游戏 ID 匹配宿主内置或导入的横幅资源。
+    /// 客体包内横幅大图候选文件名。命中即作 16:9 封面。
     static let bannerCandidateNames = ["LCBanner.jpg", "LCBanner.png", "banner.jpg", "banner.png", "cover.jpg", "cover.png", "keyart.jpg", "keyart.png"]
 
+    /// 宿主内置封面：LiveContainerSwiftUI/GameCovers/cover-<标题ID>.jpg，
+    /// 该目录属 LiveContainerSwiftUI 同步根组，资源打进 LiveContainerSwiftUI.framework 的 bundle。
+    static func bundledCoverImage(for appInfo: LCAppInfo) -> UIImage? {
+        guard let titleId = titleId(from: appInfo) else {
+            return nil
+        }
+        let resourceName = "cover-\(titleId)"
+        // 先本模块 framework 的 bundle（LCAppModel 为本模块类作锚），再兜底主 app bundle；
+        // 同步组资源一般摊平在 bundle 根，也兼容 GameCovers 子目录形态。
+        for bundle in [Bundle(for: LCAppModel.self), Bundle.main] {
+            for subdirectory in [nil, "GameCovers"] {
+                if let url = bundle.url(forResource: resourceName, withExtension: "jpg", subdirectory: subdirectory),
+                   let image = UIImage(contentsOfFile: url.path) {
+                    return image
+                }
+            }
+        }
+        return nil
+    }
+
+    /// 从客体 bundle id 提取标题 ID：形如 org.nxnative.010013c00e930000，末段 16 位十六进制即标题 ID（大小写归一为大写）。
+    static func titleId(from appInfo: LCAppInfo) -> String? {
+        guard let bundleId = appInfo.bundleIdentifier()?.lowercased() else {
+            return nil
+        }
+        let components = bundleId.split(separator: ".").map(String.init)
+        let isTitleId: (String) -> Bool = { $0.count == 16 && $0.allSatisfy(\.isHexDigit) }
+        if let last = components.last, isTitleId(last) {
+            return last.uppercased()
+        }
+        return components.first(where: isTitleId)?.uppercased()
+    }
+
     static func bannerImage(for appInfo: LCAppInfo) -> UIImage? {
+        // 优先级：宿主内置原画封面 → 客体包内候选图 → nil（卡片再退回图标兜底）
+        if let bundled = bundledCoverImage(for: appInfo) {
+            return bundled
+        }
         guard let bundlePath = appInfo.bundlePath() else {
             return nil
         }
@@ -1466,13 +1520,14 @@ struct LCGameCardView: View {
     var onRun: () -> Void
     var onOpenDataFolder: () -> Void
     var onSettings: () -> Void
+    var onImportDatapack: () -> Void
     var onUninstall: () -> Void
 
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
 
     static let creamColor = Color(red: 0.965, green: 0.929, blue: 0.839)
     private static let cardBackground = Color(red: 0.118, green: 0.118, blue: 0.129)
-    private static let accentColor = Color(red: 0.788, green: 0.373, blue: 0.263)
+    static let accentColor = Color(red: 0.788, green: 0.373, blue: 0.263)
 
     private var container: LCContainer? {
         LCGameLibraryInfo.defaultContainer(for: app)
@@ -1544,7 +1599,14 @@ struct LCGameCardView: View {
             Button {
                 onSettings()
             } label: {
-                Label("lc.tabView.settings".loc, systemImage: "gear")
+                Label("游戏设置", systemImage: "gear")
+            }
+            if !app.uiIsShared {
+                Button {
+                    onImportDatapack()
+                } label: {
+                    Label("导入数据包", systemImage: "square.and.arrow.down")
+                }
             }
             if !app.uiIsShared {
                 Button(role: .destructive) {
