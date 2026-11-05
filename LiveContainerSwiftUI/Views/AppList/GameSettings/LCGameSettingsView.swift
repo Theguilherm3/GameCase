@@ -14,8 +14,10 @@
 //  数据与语义仍是 LC 的：头部状态/胶囊走数据包状态，胶囊仅缺包时出现
 //  （「导入数据包…」），不加开始游戏；写路径（LCGamePrefs）零改。
 //  NX 独有内容（选数据文件夹 / 云存档 / 删除游戏）不搬；LC 独有行
-//  （数据包 / 封面图 / 存档 / 按键布局 / 高级 / 恢复默认）保留功能、
+//  （数据包 / 封面图 / 存档 / 高级 / 恢复默认）保留功能、
 //  按 NX 的行语言排。字型：NX 用 Manrope，本页用系统字体同字号/字重代。
+//  按键布局入口已临时下架（Phase 21）：编辑页与布局数据留在仓里，
+//  后续调整好再恢复入口；已保存的自定义布局仍由客体引擎读取生效。
 //
 
 import SwiftUI
@@ -295,7 +297,6 @@ struct LCGameSettingsView: View {
     @State private var filePickerPresented = false
     @State private var cropItem: LCCoverCropItem?
     @State private var coverErrorPresented = false
-    @State private var padEditorRequest: LCPadEditorRequest?
 
     private static let pageBackground = Color(red: 0.055, green: 0.055, blue: 0.059)
 
@@ -430,24 +431,6 @@ struct LCGameSettingsView: View {
             Button("lc.common.cancel".loc, role: .cancel) {}
         } message: {
             Text("清掉这个游戏在库里保存的全部启动器选择，回到打包时的默认值。按键布局不受影响。")
-        }
-        // 按键布局编辑器整屏呈现（Phase 20，照 NX 壳的排法：编辑器是
-        // 库根层的整屏覆盖层，"The whole screen, so the preview is as
-        // large as the device allows"）：不再像原先那样用 NavigationLink
-        // push 进宿主导航栈——竖屏 sheet 里编辑器画布以竖屏 bounds 为
-        // 坐标空间（比例与游戏横屏不符），横屏侧面板里更是被塞进约
-        // 44% 宽的面板内推进，画布与控制卡双双被裁。fullScreenCover
-        // 从 sheet / 面板内发出都盖满整屏，
-        // 关闭后本页原样（sheet 仍是 sheet、面板仍是面板、滚动位置与
-        // 已改设置都在）。本页的封面裁剪页已是同款 fullScreenCover。
-        .fullScreenCover(item: $padEditorRequest) { request in
-            LCPadLayoutEditorView(
-                game: request.game,
-                prefs: request.prefs,
-                bundlePath: app.appInfo.bundlePath(),
-                bannerImage: LCGameLibraryInfo.bannerImage(for: app.appInfo),
-                skinValue: request.skinValue
-            )
         }
     }
 
@@ -800,19 +783,6 @@ struct LCGameSettingsView: View {
                         nxDivider
                     }
                     settingRow(setting)
-                    // 按键组：皮肤行之后紧跟按键布局入口（与预览一致）
-                    if group.title == "按键", setting.env == knownGame?.skinEnv, let prefs, let knownGame {
-                        nxDivider
-                        padLayoutRow(prefs: prefs, knownGame: knownGame)
-                    }
-                }
-                // 按键组没有皮肤行（或皮肤行不在本组）时，布局入口挂在组尾
-                if group.title == "按键", !group.rows.contains(where: { $0.env == knownGame?.skinEnv }),
-                   let prefs, let knownGame {
-                    if !group.rows.isEmpty {
-                        nxDivider
-                    }
-                    padLayoutRow(prefs: prefs, knownGame: knownGame)
                 }
             }
         }
@@ -952,33 +922,6 @@ struct LCGameSettingsView: View {
         .buttonStyle(.plain)
     }
 
-    private func padLayoutRow(prefs: LCGamePrefs, knownGame: LCKnownGame) -> some View {
-        // 点行只打包入参、置位呈现请求（整屏呈现挂在 body 根层，见
-        // body 尾注）；不再用 NavigationLink push——编辑器必须整屏，
-        // 不能进 sheet / 侧面板的导航栈（Phase 20）
-        Button {
-            padEditorRequest = LCPadEditorRequest(
-                game: knownGame.padLayoutGame,
-                prefs: prefs,
-                skinValue: skinInt(for: knownGame)
-            )
-        } label: {
-            navRow(label: "按键布局") {
-                Text("调整")
-                    .font(.system(size: 14.5, weight: .semibold))
-                    .foregroundColor(LCNXColor.cream)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func skinInt(for knownGame: LCKnownGame) -> Int {
-        if let raw = currentValues[knownGame.skinEnv] ?? prefs?.launcherValue(knownGame.skinEnv) {
-            return Int(raw) ?? 1
-        }
-        return 1 // 引擎里皮肤未保存时的默认：丝之歌 1（荆棘）、哈迪斯 1（月亮）
-    }
-
     /// NX 的恢复默认块（ShellButtonStyle fills + 其下注文 12.5 白 0.45，
     /// spacing 10）移植；确认对话框沿用既有（body 的 confirmationDialog）
     private var resetRow: some View {
@@ -1107,14 +1050,4 @@ struct LCGameSettingsView: View {
         }
         currentValues = values
     }
-}
-
-/// 按键布局编辑器的整屏呈现请求（Phase 20）：padLayoutRow 点按时把
-/// 编辑器入参打包成一份，body 根层据此 fullScreenCover 整屏呈现；
-/// 关闭后请求清空，设置页保持原形态。
-private struct LCPadEditorRequest: Identifiable {
-    let id = UUID()
-    let game: LCPadLayoutGame
-    let prefs: LCGamePrefs
-    let skinValue: Int
 }
