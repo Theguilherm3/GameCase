@@ -41,15 +41,37 @@
 //  对应手势。页面内部再呈的 sheet / fullScreenCover（数据包导入、
 //  封面裁剪等）仍是系统呈现、盖在面板之上，与竖屏时一致。
 //
+//  Phase 22（呈现形态随旋转跟随）：Phase 14 的「按打开时方向分轨」
+//  在真机被证伪——竖屏以 .sheet 打开设置后旋转到横屏，sheet 是
+//  UIKit 模态、终身铺满整屏，变不回右侧面板（反向因 paneWidth 的
+//  「留不出 120 即整屏宽」规则自然退化、看起来没事）。NX 的解法是
+//  结构性的：同一个设置视图实例常驻 ZStack，形态（floating 面板 /
+//  整屏）由 ShellLayout 按「当前」尺寸在每次布局时现算——源码注释
+//  原话 "One settings view in one place for every layout, so its
+//  state, scroll position and focus survive a fold, a rotation or a
+//  Stage Manager resize."。本容器自此改为三页在两形态下的唯一宿主
+//  （.sheet 通路整体拆除）：pane 宽仍由 LCSidePanelSpec 逐布局现
+//  算，pane < 宿主宽即 floating 面板形态（压暗 + 发丝线 + 右侧滑
+//  入），pane == 宿主宽即整屏形态（自底部滑入、无压暗）。页面实例
+//  从不离开视图层级，旋转只是同一实例的帧宽与环境标记翻转——页面
+//  状态、滚动位置、进行中的设置写入全部原样保留，不存在关页重开。
+//  取舍一处：竖屏 .sheet 的下滑关闭是 UIKit sheet  chrome 的属性，
+//  单一宿主下若要保留，须逐页做滚动偏移协调（容器设置页本体按约
+//  不动、无从接入），故整屏形态以页内关闭钮为准（游戏设置「‹ 游
+//  戏库」/ 容器设置「关闭」/ 手柄页「X」，两形态都在且都走 onClose）；
+//  NX 自身整屏形态同样无下滑关闭、只靠页内返回钮。面板形态的点压
+//  暗区 + 右滑拖动关闭照旧。
+//
 
 import SwiftUI
 
-/// 「当前页处于横屏侧面板内」环境标记：面板容器在内容上置 true。
-/// LCSettingsColumn 读到它时把横屏 640 列退化为全宽填充，并把
-/// isLandscape 恒置 true（面板内页自身宽 < 高是常态——如手机横屏
-/// 面板 410×430——横竖屏语义应由呈现形态决定，不由面板内尺寸
-/// 决定；游戏设置页头部 Phase 14 起已全形态统一为图标头，此标记
-/// 现主要保住列宽退化与任何按 isLandscape 分支的页内语义）。
+/// 「当前页处于 floating 侧面板形态」环境标记：自适应宿主按当前
+/// 形态现置（Phase 22 起不再是「打开时」常量——旋转翻转形态时此
+/// 值随之翻转，页面据此原地变形）。LCSettingsColumn 读到 true 时
+/// 把横屏 640 列退化为全宽填充，并把 isLandscape 恒置 true（面板
+/// 内页自身宽 < 高是常态——如手机横屏面板 410×430——横竖屏语义
+/// 应由呈现形态决定，不由面板内尺寸决定）；整屏形态时为 false，
+/// 页面回到按自身尺寸判定的原 sheet 语义（竖屏全宽、零变化）。
 private struct LCInSidePanelKey: EnvironmentKey {
     static let defaultValue = false
 }
@@ -79,8 +101,12 @@ enum LCSidePanelSpec {
     }
 }
 
-/// 右侧抽屉面板容器：宿主在自己的 ZStack 顶层放一层，isPresented 为
-/// true 时渲染压暗层 + 面板；false 时不渲染任何可命中内容。
+/// 设置类页面的自适应宿主（Phase 22 起为三页在两形态下的唯一呈现
+/// 容器，结构照 NX LibraryView 的 settingsPane）：宿主在自己的
+/// ZStack 顶层放一层，isPresented 为 true 时按「当前」尺寸现算形态
+/// ——pane 宽 < 宿主宽 = floating 面板（压暗层 + 发丝线 + 右侧
+/// 滑入）；pane 宽 == 宿主宽 = 整屏（无压暗、自底部滑入）。旋转 /
+/// 窗口尺寸变化只改帧宽与环境标记，内容实例不重建。
 struct LCSidePanelContainer<Content: View>: View {
     var isPresented: Bool
     var onClose: () -> Void
@@ -97,16 +123,21 @@ struct LCSidePanelContainer<Content: View>: View {
     var body: some View {
         GeometryReader { geo in
             let pane = LCSidePanelSpec.paneWidth(screenWidth: geo.size.width, screenHeight: geo.size.height)
+            // 形态由当前尺寸决定（NX settingsFloat 的等价判定）：
+            // pane 占满宿主宽即整屏形态，否则为 floating 面板
+            let floating = pane < geo.size.width
             ZStack(alignment: .trailing) {
                 if isPresented {
-                    // 压暗层：盖住主页（主页随之不可交互），不透明度随
-                    // 拖动量线性变浅（NX 同式 0.55 × (1 − drag/pane)）
-                    Color.black
-                        .opacity(0.55 * (1 - min(CGFloat(1), dragOffset / max(pane, 1))))
-                        .ignoresSafeArea()
-                        .onTapGesture { onClose() }
-                        .gesture(dragGesture(pane: pane))
-                        .transition(.opacity)
+                    if floating {
+                        // 压暗层：盖住主页（主页随之不可交互），不透明度随
+                        // 拖动量线性变浅（NX 同式 0.55 × (1 − drag/pane)）
+                        Color.black
+                            .opacity(0.55 * (1 - min(CGFloat(1), dragOffset / max(pane, 1))))
+                            .ignoresSafeArea()
+                            .onTapGesture { onClose() }
+                            .gesture(dragGesture(pane: pane))
+                            .transition(.opacity)
+                    }
 
                     content()
                         .frame(width: pane)
@@ -116,19 +147,30 @@ struct LCSidePanelContainer<Content: View>: View {
                             Color(red: 0.055, green: 0.055, blue: 0.06)
                                 .ignoresSafeArea()
                         }
-                        // 朝向库一侧的 1pt 发丝线（NX hairline = 白 0.08）
+                        // 朝向库一侧的 1pt 发丝线（NX hairline = 白 0.08），
+                        // 仅 floating 形态有「朝向库的一侧」（NX 同规）
                         .overlay(alignment: .leading) {
-                            Rectangle()
-                                .fill(Color.white.opacity(0.08))
-                                .frame(width: 1)
-                                .ignoresSafeArea()
+                            if floating {
+                                Rectangle()
+                                    .fill(Color.white.opacity(0.08))
+                                    .frame(width: 1)
+                                    .ignoresSafeArea()
+                            }
                         }
                         .offset(x: dragOffset)
-                        .environment(\.lcInSidePanel, true)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                        .environment(\.lcInSidePanel, floating)
+                        .transition(floating
+                            ? .move(edge: .trailing).combined(with: .opacity)
+                            : .move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            // 形态翻转（旋转）时帧宽 / 压暗 / 列宽语义一并平滑变形；
+            // 翻转瞬间清掉面板拖动量，避免整屏形态残留横向偏移
+            .animation(slideAnimation, value: floating)
+            .onChange(of: floating) { _ in
+                dragOffset = 0
+            }
         }
         .ignoresSafeArea()
         .animation(slideAnimation, value: isPresented)

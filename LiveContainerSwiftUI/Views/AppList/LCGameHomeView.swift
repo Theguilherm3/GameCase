@@ -143,9 +143,9 @@ struct LCGameHomeView: View {
     @State private var playStats: [String: LCPlayStats.Entry] = [:]
     @State private var focusKey: String?
     @StateObject private var controllerMonitor = LCControllerMonitor()
-    @State private var controllerListPresented = false
-    /// 手柄页横屏侧面板呈现状态（Phase 14）：与 sheet 状态并行，点击当时
-    /// 按安全区尺寸宽高二选一（横屏面板 / 竖屏 sheet），旋转中不换轨
+    /// 手柄页呈现状态（Phase 22 起统一走 LCSidePanelContainer 自适应
+    /// 宿主：横屏 = 右侧面板、竖屏 = 整屏，形态随当前尺寸跟随、旋转
+    /// 原地变形；Phase 14 的 sheet / 面板打开时二选一已废除）
     @State private var controllerPanelPresented = false
 
     // 横屏轮播（NX2 CoverFlow 移植）专用状态，竖屏不读：
@@ -328,8 +328,9 @@ struct LCGameHomeView: View {
                 if installProgressVisible {
                     installPill(safeTop: safeAreaInsets.top)
                 }
-                // 手柄页横屏右侧抽屉面板（Phase 14，仅横屏打开时填充）：
-                // 主页留在下层被压暗，面板语义与容器设置 / 游戏设置同轨
+                // 手柄页自适应宿主（Phase 22）：横屏 = 右侧抽屉面板
+                // （主页留在下层被压暗）、竖屏 = 整屏，形态随旋转跟随，
+                // 语义与容器设置 / 游戏设置同轨
                 LCSidePanelContainer(isPresented: controllerPanelPresented, onClose: { controllerPanelPresented = false }) {
                     LCControllersView(monitor: controllerMonitor, onClose: { controllerPanelPresented = false })
                 }
@@ -412,15 +413,11 @@ struct LCGameHomeView: View {
 
     /// 手柄胶囊（对齐 NX 壳语义）：数字 = 当前已连接手柄数（GameController 实时
     /// 监听连接/断开刷新），点击打开手柄页（LCControllersView，复刻 NX 壳
-    /// ControllersView 的结构与视觉）：竖屏 sheet、横屏右侧抽屉面板
-    /// （Phase 14）。尺寸与位置沿用原常量，只接行为。
+    /// ControllersView 的结构与视觉）：自适应宿主呈现——横屏右侧抽屉
+    /// 面板、竖屏整屏，旋转跟随（Phase 22）。尺寸与位置沿用原常量，只接行为。
     private func gamepadCapsule(height: CGFloat) -> some View {
         Button {
-            if safeSize.width > safeSize.height {
-                controllerPanelPresented = true
-            } else {
-                controllerListPresented = true
-            }
+            controllerPanelPresented = true
         } label: {
             ZStack {
                 Capsule()
@@ -440,9 +437,6 @@ struct LCGameHomeView: View {
             .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.plain)
-        .sheet(isPresented: $controllerListPresented) {
-            LCControllersView(monitor: controllerMonitor)
-        }
     }
 
     /// ＋导入菜单：导入 IPA / 导入数据包（现有两条导入实现），外加隐藏游戏恢复入口
