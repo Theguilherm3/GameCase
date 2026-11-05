@@ -49,6 +49,12 @@ void NUDGuestHooksInit(void) {
 
     [sources removeObjectForKey:@"C/A//B/L"];
     [sources removeObjectForKey:@"C/C//*/L"];
+    // 再把其余来源一并逐出：宿主 UI 对客体偏好是直写 plist 文件的（LCGamePrefs），
+    // 进程内残留的旧 plist 来源会让客体启动器读到旧值、并在启动 apply() 时把旧值
+    // 回写覆盖库内新值（读通写不通）。上面两个键是上游已知的当前应用来源，这里
+    // 扩到全部，强制客体阶段的每次偏好读取都按磁盘现状重建来源。本 fork 串行
+    // 单开、客体退出即进程重拉回库，宿主域来源在下次访问时按磁盘重建，无回滚风险。
+    [sources removeAllObjects];
     
     // replace _CFPrefsCurrentAppIdentifierCache so kCFPreferencesCurrentApplication refers to the guest app
     const char* coreFoundationPath = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
@@ -97,7 +103,36 @@ void NUDGuestHooksInit(void) {
         NSError* error;
         [fm createDirectoryAtPath:preferenceFolderPath.path withIntermediateDirectories:YES attributes:@{} error:&error];
     }
-    
+
+    // 把客体域的偏好状态按磁盘 plist 对齐（Phase 12 第 3 项，真机证据定案）：
+    // 宿主 UI（游戏库设置页）是绕过 cfprefsd 直写客体 plist 文件的，而
+    // cfprefsd 按「自己是域文件的唯一写者」缓存域内容——它在客体上次运行
+    // 时缓存的那一代值不会因外部改文件而失效。于是单向同步：客体写→经
+    // cfprefsd 落盘→宿主直读文件能看到；宿主直写文件→客体启动经 cfprefsd
+    // 读到的仍是上一代。上面的 _sources 逐出只清本进程的来源表（PR #9 已
+    // 扩到全量，真机仍失败），陈旧层在守护进程、不在进程内。故在身份切换
+    // 完成、客体任何初始化器运行之前，把磁盘文件逐键种进客体域：文件有
+    // 的键以文件为准；文件已删的托管键（launcher.* / DmPadCustom*，宿主
+    // 「恢复默认」会删键）若域缓存里还残留，一并摘除；最后同步一次，把
+    // 对齐后的状态压回 cfprefsd，覆盖它手里的上一代缓存——此后经
+    // UserDefaults 与经 CFPreferences 的读都以文件现状为准。文件不存在
+    // （客体没跑过）时无事可做，跳过。
+    NSString* guestPrefsPath = [[appContainerPath stringByAppendingPathComponent:@"Library/Preferences"]
+        stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.plist", NSUserDefaults.lcGuestAppId]];
+    NSDictionary* fileValues = [NSDictionary dictionaryWithContentsOfFile:guestPrefsPath];
+    if(fileValues) {
+        NSDictionary* cachedDomain = [newStandardUserDefaults persistentDomainForName:NSUserDefaults.lcGuestAppId];
+        for(NSString* key in cachedDomain) {
+            if(!fileValues[key] && ([key hasPrefix:@"launcher."] || [key hasPrefix:@"DmPadCustom"])) {
+                [newStandardUserDefaults removeObjectForKey:key];
+            }
+        }
+        for(NSString* key in fileValues) {
+            [newStandardUserDefaults setObject:fileValues[key] forKey:key];
+        }
+        CFPreferencesAppSynchronize((__bridge CFStringRef)NSUserDefaults.lcGuestAppId);
+    }
+
 }
 
 NSArray* appleIdentifierPrefixes = @[

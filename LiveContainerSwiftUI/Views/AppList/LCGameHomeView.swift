@@ -36,27 +36,74 @@ enum LCGameTheme {
 struct LCGameCoverView: View {
     let app: LCAppModel
     let darkModeIcon: Bool
+    /// 库内容刷新令牌（列表层在设置页 / 导入页关闭后 bump）：封面是 body 里
+    /// 现读磁盘算出来的，本视图不观察任何状态，令牌不变 body 就不重跑、
+    /// 换完封面仍显示旧图。令牌作为入参变化即触发重解析。
+    let refreshToken: Int
+    /// 无横图兜底美化（Phase 19）：仅主页大卡（竖屏 hero）与横屏牌组卡
+    /// 打开——解析落到图标时不再把图标拉伸充数，改 NX 无横图同款语言
+    /// （与设置页头部 Phase 17 的无横图路同源）。小缩略图（最近游玩 /
+    /// 网格卡 / 横屏背景晕染）保持旧兜底，不传此旗。
+    var beautifiedFallback: Bool = false
 
     var body: some View {
+        let _ = refreshToken
         if let bannerImage = LCGameLibraryInfo.bannerImage(for: app.appInfo) {
             Image(uiImage: bannerImage)
                 .resizable()
                 .scaledToFill()
         } else if let iconImage = app.appInfo.iconIsDarkIcon(darkModeIcon) {
-            ZStack {
-                Image(uiImage: iconImage)
-                    .resizable()
-                    .scaledToFill()
-                    .blur(radius: 24)
-                    .opacity(0.75)
-                Image(uiImage: iconImage)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(18)
+            if beautifiedFallback {
+                beautifiedIconFallback(iconImage: iconImage)
+            } else {
+                ZStack {
+                    Image(uiImage: iconImage)
+                        .resizable()
+                        .scaledToFill()
+                        .blur(radius: 24)
+                        .opacity(0.75)
+                    Image(uiImage: iconImage)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(18)
+                }
             }
         } else {
             Rectangle()
                 .fill(Color.white.opacity(0.06))
+        }
+    }
+
+    /// 美化兜底：图标自体放大 1.4 + blur 40 + saturation 1.2 铺满卡面、
+    /// 黑 0.38 叠压（NX PaneBanner 无横图底原值），中央叠一张清晰图标，
+    /// 边长 = 卡高 55%，圆角 / 描边 / 阴影按 NX CoverThumbnail 规格
+    /// （圆角比 0.2、白 0.14 描边、阴影 black 0.4 / r16 / y6）。
+    private func beautifiedIconFallback(iconImage: UIImage) -> some View {
+        GeometryReader { geo in
+            let side = geo.size.height * 0.55
+            ZStack {
+                Image(uiImage: iconImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .scaleEffect(1.4)
+                    .blur(radius: 40)
+                    .saturation(1.2)
+                    .clipped()
+                Color.black.opacity(0.38)
+                Image(uiImage: iconImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: side, height: side)
+                    .clipShape(RoundedRectangle(cornerRadius: side * 0.2, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: side * 0.2, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(0.4), radius: 16, x: 0, y: 6)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
     }
 }
@@ -73,6 +120,12 @@ struct LCGameHomeView: View {
     /// 本视图内部 GeometryReader 带 .ignoresSafeArea()，它读到的
     /// geo.safeAreaInsets 恒为 0，不能直接用作浮钮排的定位依据。
     let safeAreaInsets: EdgeInsets
+    /// 安全区尺寸：同一个列表层 GeometryReader 的 size。NX CoverFlow 的
+    /// 度量参考系就是安全区 geometry（LibraryView 把 geometry.size 与
+    /// safeAreaInsets 一起传给 CoverFlowView），横屏度量按它算。
+    let safeSize: CGSize
+    /// 库内容刷新令牌：变化即本视图 body 重跑，封面与数据包状态点按磁盘重算
+    let refreshToken: Int
 
     var onRun: (LCAppModel) -> Void
     var onSettings: (LCAppModel) -> Void
@@ -85,9 +138,36 @@ struct LCGameHomeView: View {
     var onOpenContainerSettings: () -> Void
 
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
+    /// 游玩时长快照（Phase 18）：磁盘现读，本视图不观察统计文件，靠出现 /
+    /// 刷新令牌两个时点重读（见 body 的 onAppear / onChange）。
+    @State private var playStats: [String: LCPlayStats.Entry] = [:]
     @State private var focusKey: String?
     @StateObject private var controllerMonitor = LCControllerMonitor()
-    @State private var controllerListPresented = false
+    /// 手柄页呈现状态（Phase 22 起统一走 LCSidePanelContainer 自适应
+    /// 宿主：横屏 = 右侧面板、竖屏 = 整屏，形态随当前尺寸跟随、旋转
+    /// 原地变形；Phase 14 的 sheet / 面板打开时二选一已废除）
+    @State private var controllerPanelPresented = false
+
+    // 横屏轮播（NX2 CoverFlow 移植）专用状态，竖屏不读：
+    // 顺序快照在视图出现时取，浏览期间不重排（新导入的游戏追加在末尾、
+    // 已卸载的剔除，相对次序冻结）；carouselOffset 是 >3 张时手势轮播的
+    // 滚动量（点），静止时恒等于聚焦序号 × stride。
+    @State private var landscapeOrderKeys: [String] = []
+    @State private var carouselOffset: CGFloat = 0
+    @State private var carouselDragStartOffset: CGFloat = 0
+    @State private var carouselGestureStart = 0
+    @State private var carouselDragging = false
+    @State private var carouselSettled = true
+    @State private var carouselScrollEpoch = 0
+    // 横屏牌组点击裁决（Phase 16）：手势开始时的聚焦位快照、本次点按的
+    // 消费标记、以及「当前触摸序列是否已写过快照」——见 deckTap 注释。
+    // shelf 没有 carousel 的 settled 机制，用最近一次牌组切换的时刻判
+    // 停稳（deckLastSwitchAt，由 setFocusFromDeck 记录）。
+    @State private var deckTapStartFocus: Int? = nil
+    @State private var deckTapConsumed = false
+    @State private var deckTouchActive = false
+    @State private var deckLastSwitchAt: Date = .distantPast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // MARK: 聚焦与状态推导
 
@@ -136,8 +216,59 @@ struct LCGameHomeView: View {
         }
     }
 
+    // MARK: 横屏轮播的顺序与聚焦（NX2 CoverFlow 移植辅助）
+
+    /// 横屏数据源：快照次序 ∩ 现有游戏，新游戏追加末尾；快照为空（首次
+    /// 出现前）时退回入参次序。浏览期间相对次序不变，重排只发生在
+    /// onAppear 刷新快照时。
+    private var landscapeApps: [LCAppModel] {
+        let byKey = Dictionary(uniqueKeysWithValues: apps.map { (key(of: $0), $0) })
+        var result = landscapeOrderKeys.compactMap { byKey[$0] }
+        let known = Set(landscapeOrderKeys)
+        result += apps.filter { !known.contains(key(of: $0)) }
+        return result.isEmpty ? apps : result
+    }
+
+    private func landscapeFocusIndex(in list: [LCAppModel]) -> Int {
+        guard let focusedApp, let idx = list.firstIndex(of: focusedApp) else {
+            return 0
+        }
+        return idx
+    }
+
+    /// NX 的切换动画是 .smooth(duration: 0.3)，部署目标 15 没有该曲线，
+    /// 用等价时长的 timingCurve 近似；减弱动态时按 NX 同口径降为 0.2 线性。
+    private var deckAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.2) : .timingCurve(0.22, 0.61, 0.36, 1, duration: 0.3)
+    }
+
+    private func setFocusFromDeck(_ app: LCAppModel) {
+        deckLastSwitchAt = Date()
+        withAnimation(deckAnimation) {
+            focusKey = key(of: app)
+        }
+    }
+
+    /// NX CardSnap 的落点规则（一手势最多一张）：target 是手势放开后按
+    /// 惯性会停的偏移，velocity 是朝后一张卡方向的速度（pt/ms），
+    /// 超过 0.3 算甩动，落点钳在手势起始卡的相邻一张内；否则落最近卡。
+    private static func cardSnap(target: CGFloat, velocity: CGFloat, stride: CGFloat, count: Int, start: Int) -> Int {
+        let nearest = Int((target / stride).rounded())
+        let card: Int
+        if velocity > 0.3 {
+            card = max(start + 1, min(nearest, start + 1))
+        } else if velocity < -0.3 {
+            card = min(start - 1, max(nearest, start - 1))
+        } else {
+            card = nearest
+        }
+        return min(count - 1, max(0, card))
+    }
+
     private func datapackReady(_ app: LCAppModel) -> Bool {
-        LCGameLibraryInfo.isDatapackReady(container: LCGameLibraryInfo.defaultContainer(for: app))
+        // 读 refreshToken 把依赖写明：令牌变化时状态点随 body 按磁盘重算
+        _ = refreshToken
+        return LCGameLibraryInfo.isDatapackReady(container: LCGameLibraryInfo.defaultContainer(for: app))
     }
 
     /// 「最近游玩」排序：lastLaunched 倒序，从未启动过的排后面
@@ -197,15 +328,45 @@ struct LCGameHomeView: View {
                 if installProgressVisible {
                     installPill(safeTop: safeAreaInsets.top)
                 }
+                // 手柄页自适应宿主（Phase 22）：横屏 = 右侧抽屉面板
+                // （主页留在下层被压暗）、竖屏 = 整屏，形态随旋转跟随，
+                // 语义与容器设置 / 游戏设置同轨
+                // 顶部（Phase 26）：手柄页无 NavigationView，整屏形态的
+                // 内容下移由页面自己在背景内侧垫（见 LCControllersView），
+                // 宿主不外垫、不裁圆角
+                LCSidePanelContainer(isPresented: controllerPanelPresented, onClose: { controllerPanelPresented = false }) {
+                    LCControllersView(monitor: controllerMonitor, onClose: { controllerPanelPresented = false })
+                }
             }
             .frame(width: size.width, height: size.height)
         }
         .ignoresSafeArea()
         .onAppear {
             ensureFocus()
+            landscapeOrderKeys = apps.map { key(of: $0) }
+            // 游玩时长补结（Phase 18）：主页出现 = 此刻没有客体在本进程跑，
+            // 统计文件里还挂着的 openSession 必是闪退/被划掉没结清的局，
+            // 按心跳补结后再读快照（回库路径已由客体侧结清，这里是空转）。
+            LCPlayStats.reconcileOpenSession()
+            playStats = LCPlayStats.allEntries()
+            sweepCoverFetches()
+        }
+        .onChange(of: refreshToken) { _ in
+            playStats = LCPlayStats.allEntries()
+            sweepCoverFetches()
         }
         .onChange(of: apps.map { key(of: $0) }) { _ in
             ensureFocus()
+        }
+    }
+
+    /// 联网封面懒抓（Phase 19）：主页出现 / 库刷新时逐个过一遍去重入口——
+    /// 已有更高优先封面、已有抓取缓存、负缓存新鲜的游戏都在入口内直接
+    /// 返回，不发请求；抓取成功后服务回调 bump libraryRefresh，封面随
+    /// 令牌变化重解析（本 onChange 会再扫一遍，但那时缓存已落盘、空转）。
+    private func sweepCoverFetches() {
+        for app in apps {
+            LCCoverFetchService.shared.ensureFetched(appInfo: app.appInfo)
         }
     }
 
@@ -254,11 +415,12 @@ struct LCGameHomeView: View {
     }
 
     /// 手柄胶囊（对齐 NX 壳语义）：数字 = 当前已连接手柄数（GameController 实时
-    /// 监听连接/断开刷新），点击以 sheet 打开手柄页（LCControllersView，复刻 NX 壳
-    /// ControllersView 的结构与视觉）。尺寸与位置沿用原常量，只接行为。
+    /// 监听连接/断开刷新），点击打开手柄页（LCControllersView，复刻 NX 壳
+    /// ControllersView 的结构与视觉）：自适应宿主呈现——横屏右侧抽屉
+    /// 面板、竖屏整屏，旋转跟随（Phase 22）。尺寸与位置沿用原常量，只接行为。
     private func gamepadCapsule(height: CGFloat) -> some View {
         Button {
-            controllerListPresented = true
+            controllerPanelPresented = true
         } label: {
             ZStack {
                 Capsule()
@@ -278,9 +440,6 @@ struct LCGameHomeView: View {
             .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.plain)
-        .sheet(isPresented: $controllerListPresented) {
-            LCControllersView(monitor: controllerMonitor)
-        }
     }
 
     /// ＋导入菜单：导入 IPA / 导入数据包（现有两条导入实现），外加隐藏游戏恢复入口
@@ -479,7 +638,7 @@ struct LCGameHomeView: View {
     private func portraitHero(width: CGFloat, height: CGFloat, safeTop: CGFloat, margin m: CGFloat) -> some View {
         ZStack {
             if let app = focusedApp {
-                LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
+                LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
                     .frame(width: width, height: height)
                     .clipped()
             }
@@ -567,7 +726,7 @@ struct LCGameHomeView: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: spacing), GridItem(.flexible(), spacing: spacing)], spacing: 18) {
                 ForEach(apps, id: \.self) { app in
                     VStack(alignment: .leading, spacing: 8) {
-                        LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
+                        LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
                             .frame(width: columnWidth, height: columnWidth * 9 / 16)
                             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                             .overlay(alignment: .topLeading) {
@@ -609,7 +768,7 @@ struct LCGameHomeView: View {
             ForEach(rows.indices, id: \.self) { idx in
                 let app = rows[idx]
                 HStack(spacing: 12) {
-                    LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
+                    LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
                         .frame(width: 73, height: 41)
                         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                     VStack(alignment: .leading, spacing: 3) {
@@ -618,6 +777,14 @@ struct LCGameHomeView: View {
                             .foregroundColor(.white)
                             .lineLimit(1)
                         recentSubtitle(for: app)
+                        // 游玩时长行（Phase 18，用户指定只上「最近游玩」）：
+                        // 有累计记录才出，文案如「累计 2 小时 5 分钟 · 上次 32 分钟」
+                        if let statsText = LCPlayStats.summaryText(for: playStats[app.bundleIdentifier]) {
+                            Text(statsText)
+                                .font(.system(size: 12.5))
+                                .foregroundColor(LCGameTheme.mutedText)
+                                .lineLimit(1)
+                        }
                     }
                     Spacer()
                     Button {
@@ -724,69 +891,87 @@ struct LCGameHomeView: View {
         .ignoresSafeArea(edges: .bottom)
     }
 
-    // MARK: 横屏
+    // MARK: 横屏（NX2 CoverFlow 移植：几何与吸附规则照 DmShell CoverFlowView）
+
+    /// 横屏度量：与 NX CoverFlowView 同一度量参考系——全部量在安全区
+    /// geometry 内原样计算（safeSize + safeAreaInsets，正是 NX
+    /// LibraryView 传给 CoverFlowView 的 geometry.size + screenInsets），
+    /// 不再用全屏尺寸做「等值换算」：旧换算的两处宽度封顶（0.54 cap 与
+    /// shelf cap）误用全屏宽，卡区锚点也脱离了 NX 的 middle 定义，
+    /// 安全区左右留边越大的机型偏得越多（Phase 13）。
+    /// 卡高由上下两头反推（下：卡底要给信息区让位；上：卡顶不进顶栏
+    /// 区），再被安全区宽 54% 的 16:9 封顶，最后 /1.06 给倾斜留头寸。
+    /// short = 安全区高 < 520（手机横屏）。
+    private struct LCLandscapeMetrics {
+        let short: Bool
+        let cover: CGFloat
+        let stride: CGFloat
+        let cardAreaHeight: CGFloat
+        let cardAreaTop: CGFloat
+        let gap: CGFloat
+        let titleSize: CGFloat
+        /// 安全区宽：shelf 的卡宽封顶按它算（NX shelf 的 width 入参）
+        let contentWidth: CGFloat
+
+        init(safeSize: CGSize, safe: EdgeInsets) {
+            let width = safeSize.width
+            let height = safeSize.height
+            short = height < 520
+            titleSize = short ? 18 : 28
+            let words = titleSize * 1.3 * 2 + 8 + 34
+            gap = short ? 10 : 24
+            let below: CGFloat = short ? 4 : 56
+            let barTop: CGFloat = short ? 12 : 16
+            // 整屏中点在安全区坐标系里的位置（NX middle 定义原式）
+            let middle = (height + safe.top + safe.bottom) / 2 - safe.top
+            let byBottom = 2 * (height - middle - gap - words - below)
+            let byTop = 2 * (middle - barTop - 44 - (short ? 6 : 16))
+            let cardHeight = max(90, min(byBottom, byTop, width * 0.54 * 9 / 16) / 1.06)
+            cover = cardHeight * 16 / 9
+            stride = cover + cover * 0.04
+            cardAreaHeight = cardHeight * 1.06
+            // 卡区顶换算回本视图（全屏出血）坐标：安全区原点 + middle
+            cardAreaTop = safe.top + middle - cardAreaHeight / 2
+            contentWidth = width
+        }
+    }
 
     private func landscape(size: CGSize, safe: EdgeInsets) -> some View {
         let w = size.width
-        let h = size.height
-        let m = margin(for: size)
-        let focusedW = w * 0.385
-        let centerY = h * 0.54
-        return ZStack {
-            // 封面色调背景：聚焦封面重模糊 + 压暗（照预览取值）
-            if let app = focusedApp {
-                LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
-                    .frame(width: w, height: h)
-                    .clipped()
-                    .blur(radius: 30)
-                    .saturation(1.15)
-                    .brightness(-0.16)
-                    .overlay(Color.black.opacity(0.28))
-            }
-            VStack {
-                Spacer()
-                LinearGradient(
-                    gradient: Gradient(stops: [
-                        .init(color: Color.black.opacity(0), location: 0),
-                        .init(color: Color.black.opacity(0.65), location: 1)
-                    ]),
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(height: h * 0.6)
-            }
-            VStack {
-                LinearGradient(
-                    gradient: Gradient(stops: [
-                        .init(color: Color.black.opacity(0.24), location: 0),
-                        .init(color: Color.black.opacity(0), location: 1)
-                    ]),
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(height: h * 0.2)
-                Spacer()
-            }
+        let metrics = LCLandscapeMetrics(safeSize: safeSize, safe: safe)
+        let list = landscapeApps
+        let focusIdx = landscapeFocusIndex(in: list)
+        return ZStack(alignment: .top) {
+            landscapeBackdrop(size: size)
 
-            // 轮播
-            carousel(size: size, centerY: centerY)
-                .gesture(
-                    DragGesture(minimumDistance: 24)
-                        .onEnded { value in
-                            if value.translation.width < -50 {
-                                stepFocus(1)
-                            } else if value.translation.width > 50 {
-                                stepFocus(-1)
-                            }
-                        }
-                )
+            // 卡区 + 信息区：卡区顶按整屏中点定位，信息区跟在卡区下方 gap 处
+            VStack(spacing: 0) {
+                Group {
+                    if list.count <= 3 {
+                        landscapeShelf(list: list, metrics: metrics, width: metrics.contentWidth)
+                    } else {
+                        landscapeCarousel(list: list, metrics: metrics, size: size)
+                    }
+                }
+                .frame(height: metrics.cardAreaHeight)
 
-            // 顶部行：左位置字、右按钮排
+                if let app = focusedApp {
+                    landscapeInfo(app: app, metrics: metrics, width: w)
+                        .padding(.top, metrics.gap)
+                        .padding(.horizontal, 24)
+                }
+            }
+            .padding(.top, metrics.cardAreaTop)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+            // 顶部行：左位置字、右按钮排（LC 现行，位置口径不动）
             VStack {
                 HStack(alignment: .center) {
                     HStack(spacing: 12) {
                         Text("你的游戏")
                             .font(.system(size: 14))
                             .foregroundColor(Color(red: 206 / 255, green: 200 / 255, blue: 194 / 255))
-                        Text("第 \(focusIndex + 1) 个，共 \(apps.count)")
+                        Text("第 \(focusIdx + 1) 个，共 \(list.count)")
                             .font(.system(size: 14))
                             .foregroundColor(Color(red: 172 / 255, green: 164 / 255, blue: 158 / 255))
                     }
@@ -795,119 +980,396 @@ struct LCGameHomeView: View {
                 }
                 // 顶排对齐 NX 横屏：钮面约在屏高 4% 处起（图标中心 ≈ 7%）
                 .padding(.top, safe.top + size.height * 0.04)
-                .padding(.horizontal, m)
+                .padding(.horizontal, margin(for: size))
                 Spacer()
             }
+        }
+    }
 
-            // 聚焦游戏名 + 状态行（居中于聚焦卡）
+    /// 背景：聚焦游戏封面的色调晕染（NX CoverFlowBackdrop 常量）：原图
+    /// 放大 1.3、模糊 60、饱和 1.25、不透明 0.75，切换时 0.45 交叉淡化；
+    /// 上面再压径向（中心 0.5/0.4、80→900）与纵向两道渐变收边。
+    private func landscapeBackdrop(size: CGSize) -> some View {
+        ZStack {
+            LCGameTheme.pageBackground
             if let app = focusedApp {
-                let cardBottom = centerY + focusedW * 9 / 32
-                VStack(spacing: 9) {
-                    Text(app.displayName)
-                        .font(.system(size: 19, weight: .bold))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                    HStack(spacing: 7) {
-                        statusDot(color: datapackReady(app) ? LCGameTheme.readyGreen : LCGameTheme.missingAmber, radius: 4)
-                        Text(datapackReady(app) ? "随时可玩 · 数据包已就绪" : "缺数据包")
-                            .font(.system(size: 12))
-                            .foregroundColor(datapackReady(app)
-                                ? Color(red: 196 / 255, green: 232 / 255, blue: 204 / 255)
-                                : Color(red: 1.0, green: 196 / 255, blue: 110 / 255))
-                    }
+                LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+                    .scaleEffect(1.3)
+                    .blur(radius: 60)
+                    .saturation(1.25)
+                    .opacity(0.75)
+                    .id(key(of: app))
+                    .transition(.opacity)
+            }
+            RadialGradient(
+                colors: [.clear, LCGameTheme.pageBackground.opacity(0.75)],
+                center: UnitPoint(x: 0.5, y: 0.4),
+                startRadius: 80,
+                endRadius: 900
+            )
+            LinearGradient(
+                colors: [.black.opacity(0.25), .clear, LCGameTheme.pageBackground.opacity(0.85)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .frame(width: size.width, height: size.height)
+        .animation(reduceMotion ? .linear(duration: 0.2) : .easeInOut(duration: 0.45), value: focusKey)
+    }
+
+    /// 聚焦卡下方信息区（NX 布局、LC 语义）：游戏名（字号随 short 取
+    /// 18/28、两行预留、切换只交叉淡化不跳高），其下 34pt 定高行放 LC
+    /// 自己的数据包状态；开始入口仍是点聚焦卡本身，不搬 NX 的状态文案。
+    private func landscapeInfo(app: LCAppModel, metrics: LCLandscapeMetrics, width w: CGFloat) -> some View {
+        let ready = datapackReady(app)
+        return ZStack(alignment: .top) {
+            // 隐藏占位先量好两行标题 + 34 状态行，切换时只有文字淡换
+            VStack(spacing: 8) {
+                Text("M\nM")
+                    .font(.system(size: metrics.titleSize, weight: .bold))
+                Color.clear.frame(height: 34)
+            }
+            .hidden()
+            .accessibilityHidden(true)
+
+            VStack(spacing: 8) {
+                Text(app.displayName)
+                    .font(.system(size: metrics.titleSize, weight: .bold))
+                    .tracking(-metrics.titleSize * 0.04)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.35), radius: 10)
+                HStack(spacing: 7) {
+                    statusDot(color: ready ? LCGameTheme.readyGreen : LCGameTheme.missingAmber, radius: 4)
+                    Text(ready ? "随时可玩 · 数据包已就绪" : "缺数据包")
+                        .font(.system(size: 12))
+                        .foregroundColor(ready
+                            ? Color(red: 196 / 255, green: 232 / 255, blue: 204 / 255)
+                            : Color(red: 1.0, green: 196 / 255, blue: 110 / 255))
                 }
-                .position(x: carouselCenterX(for: focusIndex, width: w), y: cardBottom + 40)
+                .frame(height: 34)
             }
+            .id(key(of: app))
+            .transition(.opacity)
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: focusKey)
+        .frame(maxWidth: min(560, w - 48))
+        .frame(maxWidth: .infinity)
     }
 
-    /// 轮播里第 index 张卡的中心 X：聚焦卡左缘在屏宽 20.8% 处，邻卡依次紧贴
-    /// （NX 横屏实测：聚焦卡宽 ≈ 38.5%、邻卡 ≈ 30%）
-    private func carouselCenterX(for index: Int, width w: CGFloat) -> CGFloat {
-        let focusedW = w * 0.385
-        let neighborW = w * 0.30
-        func cardWidth(_ i: Int) -> CGFloat {
-            i == focusIndex ? focusedW : neighborW
-        }
-        var center = w * 0.208 + focusedW / 2
-        if index == focusIndex {
-            return center
-        }
-        var current = focusIndex
-        if index > focusIndex {
-            while current < index {
-                center += (cardWidth(current) + cardWidth(current + 1)) / 2
-                current += 1
+    /// 一张 16:9 卡（NX CoverView 常量）：圆角 = 卡宽 3%、白色 0.10 描边、
+    /// 阴影黑 0.5 / 半径卡宽 5% / y 卡宽 3%；左上状态点直径钳在
+    /// 8…14（卡宽 3.4%）、内距 = 点径 0.9。非聚焦卡缺数据包时左下加
+    /// LC 自己的琥珀胶囊（LC 语义，NX 无此件）。
+    /// transformScale：调用方此前靠外层 scaleEffect 呈现的缩放比（shelf
+    /// 邻卡 0.8、聚焦与 carousel 恒 1）。按 cardW 成比例的部件（圆角 /
+    /// 阴影）折进渲染尺寸后自动等值，但状态点（带钳制）与琥珀胶囊
+    /// （固定字号 / 内距）不成比例，须按缩放比还原旧的有效尺寸；
+    /// 默认 1 时与旧口径逐点一致。
+    private func landscapeCard(app: LCAppModel, cardW: CGFloat, isFocused: Bool, transformScale: CGFloat = 1) -> some View {
+        let ready = datapackReady(app)
+        let dot = max(8, min(14, (cardW / transformScale) * 0.034)) * transformScale
+        return LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
+            .frame(width: cardW, height: cardW * 9 / 16)
+            .clipShape(RoundedRectangle(cornerRadius: cardW * 0.03, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cardW * 0.03, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
             }
-        } else {
-            while current > index {
-                center -= (cardWidth(current) + cardWidth(current - 1)) / 2
-                current -= 1
+            .overlay(alignment: .topLeading) {
+                statusDot(color: ready ? LCGameTheme.readyGreen : LCGameTheme.missingAmber, radius: dot / 2)
+                    .padding(dot * 0.9)
             }
-        }
-        return center
+            .overlay(alignment: .bottomLeading) {
+                if !isFocused && !ready {
+                    HStack(spacing: 6 * transformScale) {
+                        Circle()
+                            .fill(LCGameTheme.missingAmber)
+                            .frame(width: 8 * transformScale, height: 8 * transformScale)
+                        Text("缺数据包")
+                            .font(.system(size: 10.5 * transformScale, weight: .bold))
+                            .foregroundColor(LCGameTheme.missingAmber)
+                    }
+                    .padding(.horizontal, 10 * transformScale)
+                    .padding(.vertical, 5 * transformScale)
+                    .background(Capsule().fill(Color(red: 24 / 255, green: 18 / 255, blue: 8 / 255).opacity(0.85)))
+                    .padding(10 * transformScale)
+                }
+            }
+            .shadow(color: .black.opacity(0.5), radius: cardW * 0.05, y: cardW * 0.03)
     }
 
-    private func carousel(size: CGSize, centerY: CGFloat) -> some View {
-        let w = size.width
-        let focusedW = w * 0.385
-        let neighborW = w * 0.30
-        return ZStack {
-            ForEach(apps.indices, id: \.self) { idx in
-                let app = apps[idx]
-                let isFocused = idx == focusIndex
-                let cardW = isFocused ? focusedW : neighborW
-                LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
-                    .frame(width: cardW, height: cardW * 9 / 16)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(Color.white.opacity(isFocused ? 0.14 : 0.12), lineWidth: 1)
-                    }
-                    .overlay(alignment: .topLeading) {
-                        statusDot(color: datapackReady(app) ? LCGameTheme.readyGreen : LCGameTheme.missingAmber, radius: 5.5)
-                            .padding(11)
-                    }
-                    .overlay(alignment: .bottomLeading) {
-                        if !isFocused && !datapackReady(app) {
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(LCGameTheme.missingAmber)
-                                    .frame(width: 8, height: 8)
-                                Text("缺数据包")
-                                    .font(.system(size: 10.5, weight: .bold))
-                                    .foregroundColor(LCGameTheme.missingAmber)
+    /// 1…3 张（NX shelf）：一字排开居中，聚焦卡原大、邻卡 0.8 缩放压暗
+    /// （brightness -0.22），每张按 (序号 - 中位) × 卡宽 0.78 错位叠放；
+    /// 横滑一格切一张（NX 手势门槛：最小距离 24、|dx| > 44 且 > |dy|×1.5），
+    /// 两端停住不绕圈。单张时无邻卡、无错位，就是居中一张。
+    /// 定位走布局空间（Phase 15）：旧实现所有卡共用同一块居中布局帧、
+    /// 只靠 offset / scaleEffect 摆出渲染位置，命中区留在布局帧上——
+    /// 聚焦卡（zIndex 10 先命中）的命中矩形比它渲染出的右缘多探约
+    /// 0.39×卡宽，罩住邻卡可见区的内侧一大半，点邻卡会误启动聚焦款；
+    /// contextMenu 又挂在已变换的视图上，长按预览按布局帧取快照、
+    /// 内容被变换推偏裁切。现在缩放直接折进卡的渲染尺寸、落位用
+    /// position（布局锚点），每张卡的布局帧即渲染帧：命中形状与
+    /// 渲染形状一致、重叠区按 zIndex 归上层（聚焦卡）；菜单挂的就
+    /// 是这张未变换的卡，系统长按预览按其真实帧取快照、封面完整
+    /// （带 preview 的 contextMenu 写法要 iOS 16、部署目标 15 用不了，
+    /// 本法是其等价替代）。几何常量（卡宽封顶、0.78 步距、0.8 缩放、
+    /// -0.22 压暗、zIndex 规则）一律未动。
+    private func landscapeShelf(list: [LCAppModel], metrics: LCLandscapeMetrics, width w: CGFloat) -> some View {
+        let card = min(metrics.cover, w / (1 + CGFloat(list.count - 1) * 0.8))
+        let chosen = landscapeFocusIndex(in: list)
+        return GeometryReader { geo in
+            ZStack {
+                ForEach(list.indices, id: \.self) { idx in
+                    let app = list[idx]
+                    let isChosen = idx == chosen
+                    let scale: CGFloat = isChosen ? 1 : 0.8
+                    let renderedW = card * scale
+                    landscapeCard(app: app, cardW: renderedW, isFocused: isChosen, transformScale: scale)
+                        .brightness(isChosen ? 0 : -0.22)
+                        .contentShape(RoundedRectangle(cornerRadius: renderedW * 0.03, style: .continuous))
+                        .onTapGesture {
+                            deckTap(app: app, index: idx, list: list, isSettled: deckSettled) {
+                                setFocusFromDeck(app)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(Color(red: 24 / 255, green: 18 / 255, blue: 8 / 255).opacity(0.85)))
-                            .padding(10)
+                        }
+                        .contextMenu {
+                            gameContextMenu(for: app)
+                        }
+                        .position(
+                            x: geo.size.width / 2 + (CGFloat(idx) - CGFloat(list.count - 1) / 2) * card * 0.78,
+                            y: geo.size.height / 2
+                        )
+                        .zIndex(isChosen ? 10 : -Double(abs(idx - chosen)))
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .contentShape(Rectangle())
+            .simultaneousGesture(deckTouchWatcher(list: list))
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 24)
+                    .onEnded { value in
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        guard list.count > 1, abs(dx) > 44, abs(dx) > abs(dy) * 1.5 else {
+                            return
+                        }
+                        let target = min(list.count - 1, max(0, chosen + (dx < 0 ? 1 : -1)))
+                        if target != chosen {
+                            setFocusFromDeck(list[target])
                         }
                     }
-                    .overlay {
-                        if !isFocused {
-                            Color.black.opacity(0.28)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            )
+        }
+    }
+
+    /// 4 张起（NX carousel 的手势移植）：部署目标 15 用不了 NX 的
+    /// ScrollView 吸附 API，改手势驱动同一套几何——place = 序号 - 偏移 /
+    /// stride，每卡按 FlowTilt 变形：近处（|place| 钳 ±1）绕 Y 轴回转
+    /// 最多 24°（透视 0.35）、缩放 1 - |near|×0.22、内收 near×卡宽 0.28、
+    /// 压暗 |near|×0.25；远处再多退 far×卡宽 0.55、压暗至多 0.1；
+    /// zIndex = -|place|，近卡恒在上。只构造 |place| ≤ 2 的卡（聚焦 ±2），
+    /// 更远的卡不建视图、不触发封面解析，长列表不预载全部封面。
+    private func landscapeCarousel(list: [LCAppModel], metrics: LCLandscapeMetrics, size: CGSize) -> some View {
+        let w = size.width
+        let cover = metrics.cover
+        let stride = metrics.stride
+        let areaH = metrics.cardAreaHeight
+        let focusIdx = landscapeFocusIndex(in: list)
+        return ZStack {
+            ForEach(list.indices, id: \.self) { idx in
+                let place = CGFloat(idx) - carouselOffset / stride
+                if abs(place) <= 2 {
+                    let app = list[idx]
+                    let near = max(-1, min(1, place))
+                    let far = place > 1 ? place - 1 : place < -1 ? place + 1 : 0
+                    landscapeCard(app: app, cardW: cover, isFocused: idx == focusIdx)
+                        // Phase 15 审计：命中走 position 布局落位（见
+                        // landscapeShelf 注释），无 shelf 的误启动病；
+                        // 菜单原挂在旋转 / 缩放之后的视图上、与 shelf
+                        // 的预览病同源，改挂到未变换的卡本体上——
+                        // 系统快照源即卡本身，变换全部留在菜单之外。
+                        .contextMenu {
+                            gameContextMenu(for: app)
                         }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        // NX 原版横屏没有开始钮：点已聚焦的卡 = 启动，点邻卡只切换聚焦
-                        if isFocused {
-                            onRun(app)
-                        } else {
-                            setFocus(app)
+                        .rotation3DEffect(
+                            .degrees(reduceMotion ? 0 : -near * 24),
+                            axis: (x: 0, y: 1, z: 0),
+                            perspective: 0.35
+                        )
+                        .scaleEffect(1 - abs(near) * 0.22)
+                        .brightness(-abs(near) * 0.25 - min(abs(far), 1) * 0.1)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            carouselTap(app: app, index: idx, list: list, stride: stride)
                         }
-                    }
-                    .contextMenu {
-                        gameContextMenu(for: app)
-                    }
-                    .position(x: carouselCenterX(for: idx, width: w), y: centerY)
-                    .zIndex(isFocused ? 2 : 1)
-                    .animation(.easeInOut(duration: 0.35), value: focusIndex)
+                        .position(
+                            x: w / 2 + place * stride - near * cover * 0.28 - far * cover * 0.55,
+                            y: areaH / 2
+                        )
+                        .zIndex(-Double(abs(place)))
+                }
             }
         }
-        .frame(width: w, height: size.height)
+        .frame(width: w, height: areaH)
+        .contentShape(Rectangle())
+        .gesture(carouselDrag(list: list, stride: stride))
+        .simultaneousGesture(deckTouchWatcher(list: list))
+        .onAppear {
+            carouselOffset = CGFloat(focusIdx) * stride
+        }
+        .onChange(of: focusKey) { _ in
+            syncCarouselOffset(list: list, stride: stride)
+        }
+        .onChange(of: w) { _ in
+            carouselOffset = CGFloat(landscapeFocusIndex(in: list)) * stride
+        }
+    }
+
+    /// 触摸观察手势（Phase 16）：与牌组自身的滑动 / 点击同时识别，
+    /// 只在每次触摸序列落下时写一次「手势开始时的聚焦位」快照并复位
+    /// 消费标记。裁决只认这张快照，不认裁决时（可能已被切换动画或
+    /// asyncAfter 改过的）当前聚焦。
+    private func deckTouchWatcher(list: [LCAppModel]) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                guard !deckTouchActive else { return }
+                deckTouchActive = true
+                deckTapConsumed = false
+                deckTapStartFocus = landscapeFocusIndex(in: list)
+            }
+            .onEnded { _ in
+                deckTouchActive = false
+            }
+    }
+
+    /// shelf 的停稳判定：距上次牌组切换 ≥ 切换动画时长（0.3）+ 余量，
+    /// 与 carousel 的 0.32 口径对齐（reduceMotion 时动画 0.2，同一
+    /// 阈值仍成立）。
+    private var deckSettled: Bool {
+        Date().timeIntervalSince(deckLastSwitchAt) >= 0.32
+    }
+
+    /// 横屏牌组点击的唯一裁决点（Phase 16，NX 三条逻辑的结构性强制）：
+    /// 滑动切换走既有手势、不经此；点后面的封面只切换；只有点已经
+    /// 停稳在前面的封面才启动。旧实现的两条漏路：① shelf 的
+    /// onTapGesture 闭包捕获的是渲染时算好的 isChosen，裁决数据与
+    /// 裁决时刻脱钩——切换动画途中视图再渲染，闭包会带着新聚焦位
+    /// 重入，手指落下时还是后面的卡、识别完成时已被判成前面的卡；
+    /// ② carousel 的 carouselTap 在裁决时现读聚焦位，邻卡路径又在
+    /// 同一手势里当场改聚焦、settled 0.32s 后由 asyncAfter 翻回，
+    /// 未停稳窗口里的后续识别能赶上新聚焦位 + settled 而误启动。
+    /// 本裁决在触摸落下时冻结聚焦位（deckTouchWatcher 的快照），
+    /// 点击结束时只裁决一次并消费：被点卡 ≠ 开始时聚焦卡 → 只执行
+    /// focusAction（切换），同一次点按绝不二次裁决；被点卡 = 开始时
+    /// 聚焦卡且已停稳 → 启动。快照缺失（观察手势未及写下）时退回
+    /// 现读聚焦位，仅该一次点按回到旧口径。
+    private func deckTap(app: LCAppModel, index idx: Int, list: [LCAppModel], isSettled: Bool, focusAction: () -> Void) {
+        guard !deckTapConsumed else { return }
+        deckTapConsumed = true
+        let startFocus = deckTapStartFocus ?? landscapeFocusIndex(in: list)
+        if idx != startFocus {
+            focusAction()
+        } else if isSettled {
+            onRun(app)
+        }
+    }
+
+    /// 点邻卡只居中、点已聚焦卡在轮播停稳时才启动——裁决统一走
+    /// deckTap（手势开始时的聚焦位 + 一次消费），此处只提供 carousel
+    /// 的切换动作（滚动到该卡 + 落聚焦 + settled 计时）。
+    private func carouselTap(app: LCAppModel, index idx: Int, list: [LCAppModel], stride: CGFloat) {
+        deckTap(app: app, index: idx, list: list, isSettled: carouselSettled && !carouselDragging) {
+            beginCarouselScroll()
+            withAnimation(deckAnimation) {
+                carouselOffset = CGFloat(idx) * stride
+            }
+            setFocusFromDeck(app)
+            finishCarouselScroll(epoch: carouselScrollEpoch)
+        }
+    }
+
+    private func carouselDrag(list: [LCAppModel], stride: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                if !carouselDragging {
+                    carouselDragging = true
+                    carouselDragStartOffset = carouselOffset
+                    carouselGestureStart = min(list.count - 1, max(0, Int((carouselOffset / stride).rounded())))
+                    beginCarouselScroll()
+                }
+                carouselOffset = min(
+                    CGFloat(list.count - 1) * stride,
+                    max(0, carouselDragStartOffset - value.translation.width)
+                )
+            }
+            .onEnded { value in
+                carouselDragging = false
+                // NX CardSnap 的入参：target = 惯性预测落点的偏移，
+                // velocity 换成朝后一张卡为正的 pt/ms
+                let target = carouselDragStartOffset - value.predictedEndTranslation.width
+                let velocity = -value.velocity.width / 1000
+                let card = Self.cardSnap(
+                    target: target,
+                    velocity: velocity,
+                    stride: stride,
+                    count: list.count,
+                    start: carouselGestureStart
+                )
+                withAnimation(deckAnimation) {
+                    carouselOffset = CGFloat(card) * stride
+                }
+                // Phase 23：落点一决定（手势结束 / 吸附开始这一帧）就
+                // 提交聚焦——背景 0.45 淡化与名牌 0.2 淡化由此与吸附
+                // 动画同时起跑。旧实现把提交压在吸附之后：asyncAfter
+                // (+0.32) 才落聚焦，三层串行，卡停稳后名牌还要再等
+                // 0.32 才开始换、背景 0.32+0.45 才换完（录屏实测背景 /
+                // 标题慢约半秒跟上）。NX 的选择虽生于滚动 idle，但其
+                // 滚动自带减速段、提交与停稳同帧，淡化在停稳帧起跑；
+                // 本手势移植以「落点提交」为闸达成同一观感时序。拖拽
+                // 进行中（onChanged）不提交——未决定落点的滑动不换
+                // 背景 / 名牌，防闪烁原意不变。settled 不在此翻：仍由
+                // finishCarouselScroll 在 +0.32 翻（与点邻卡 / 外部同步
+                // 同一机制），Phase 16 的点击裁决口径不动。
+                if list.indices.contains(card) {
+                    setFocusFromDeck(list[card])
+                }
+                finishCarouselScroll(epoch: carouselScrollEpoch)
+            }
+    }
+
+    /// 聚焦被外部改动（列表增删、竖屏切歌后转横屏）时把偏移跟上；
+    /// 拖动中不干预（手势优先，与 NX 同义）。
+    private func syncCarouselOffset(list: [LCAppModel], stride: CGFloat) {
+        guard !carouselDragging else {
+            return
+        }
+        let target = CGFloat(landscapeFocusIndex(in: list)) * stride
+        guard abs(carouselOffset - target) > 0.5 else {
+            return
+        }
+        beginCarouselScroll()
+        withAnimation(deckAnimation) {
+            carouselOffset = target
+        }
+        finishCarouselScroll(epoch: carouselScrollEpoch)
+    }
+
+    private func beginCarouselScroll() {
+        carouselScrollEpoch += 1
+        carouselSettled = false
+    }
+
+    private func finishCarouselScroll(epoch: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+            if carouselScrollEpoch == epoch {
+                carouselSettled = true
+            }
+        }
     }
 }
 
