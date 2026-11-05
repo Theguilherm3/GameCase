@@ -289,6 +289,8 @@ struct LCGameSettingsView: View {
     @State private var statusRefresh = 0 // 数据包导入完成后 bump，刷新状态点
     @State private var confirmReset = false
     @State private var headerWidth: CGFloat = 0 // 封面头实测宽（NX PaneBanner 同法，背景 GeometryReader 回填）
+    @State private var headerHeight: CGFloat = 0 // 封面头实测高（Phase 28：页面根出血条的帧高 = 本值 + topInset）
+    @State private var headerOriginY: CGFloat = 0 // 封面头在页面坐标系里的 minY（静止 0、上滚为负；Phase 28 出血条随滚动耦合）
 
     // 自定义封面流程（选图 → 16:9 裁剪 → 存宿主 Documents/CustomCovers）
     @State private var coverRefresh = 0 // 换/删自定义封面后 bump，刷新本页封面头与封面行
@@ -299,6 +301,10 @@ struct LCGameSettingsView: View {
     @State private var coverErrorPresented = false
 
     private static let pageBackground = Color(red: 0.055, green: 0.055, blue: 0.059)
+
+    /// 页面根坐标系名（Phase 28）：封面头的背景量测 GeometryReader 以
+    /// 此读头部在页面内的 minY，驱动页面根出血条随滚动同速移动
+    private static let pageCoordinateSpace = "LCGameSettingsPage"
 
     private var knownGame: LCKnownGame? {
         LCKnownGame.from(bundleIdentifier: app.bundleIdentifier)
@@ -319,6 +325,7 @@ struct LCGameSettingsView: View {
         // 内容列同在列内，宽随列宽。
         LCSettingsColumn { _ in
         ZStack(alignment: .topLeading) {
+            coverTopBleed
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     coverHeader
@@ -398,6 +405,7 @@ struct LCGameSettingsView: View {
             .padding(.leading, 16)
             .padding(.top, 6)
         }
+        .coordinateSpace(name: Self.pageCoordinateSpace)
         .navigationBarHidden(true)
         }
         .background(Self.pageBackground.ignoresSafeArea())
@@ -456,6 +464,27 @@ struct LCGameSettingsView: View {
     /// 同式、不残留。封面走既有解析链（自定义 → 客体横版图 →
     /// 内置原画 → 联网获取 → 图标）；来源为图标时按 NX 无横图
     /// 路：图标自体模糊底 + 96×96 缩略图。
+    ///
+    /// Phase 28（Phase 26 出血在真机失效，跟进修复）：main/15c7795
+    /// 真机裁决顶部仍是黑带、封面仍从安全线才起。失效根因两层、
+    /// 任一独立成立：①协商被吃——ignoresSafeArea 只能把视图扩进
+    /// 「其自身安全区里尚存的 inset」，而外包 NavigationView 已把
+    /// 设备顶部 inset 解析进内容布局帧（内容顶缘 = 安全线，Phase
+    /// 24 实测），提案到达头部背景时继承到的 top inset 已是 0，
+    /// 修饰符扩 0、恒为无操作（本工程安全区数值一律取 UIKit 真值
+    /// 同因）；②视口裁剪——背景身处 ScrollView 内容内、视口顶缘
+    /// 即安全线，内容绘制被裁在视口内，纵使扩得出、安全线以上
+    /// 那段也会被切掉（现行 +160 向下溢出能存活，只因始终在视口
+    /// 内）。修法改显式几何、两处配合：头内背景以 .offset(y:
+    /// −topInset) 显式上移、绘制总高相应 += topInset（extraTop
+    /// 参数），把图像映射定死为「图顶 = 物理顶、总高 = 帧高 +
+    /// topInset + 160」与 NX 逐点一致；其安全线以上一段仍会被视
+    /// 口裁掉，由页面根的 coverTopBleed 以同一映射补画该带（挂在
+    /// ScrollView 之外、无从裁剪），且随头部滚动同速移动、两份
+    /// 在安全线处严丝合缝。信息簇 / 胶囊 / scrim 逐点不动
+    /// （scrim 在背景体内、锚点随背景顶回到物理顶，即 Phase 26
+    /// 的设计位置）。横屏面板 topInset = 0：offset 与 extraTop
+    /// 皆 0、出血条不渲染，逐点同现行。
     private var coverHeader: some View {
         let resolution = coverResolution
         let hasBanner = resolution.source != .icon
@@ -469,17 +498,47 @@ struct LCGameSettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
         .background {
-            // 背景层向上出血到物理顶（布局帧不动）：底图的图顶与
-            // scrim 随之落在状态栏之下，封面铺满到屏幕顶缘
-            headerBackdrop(image: resolution.image, hasBanner: hasBanner, topInset: topInset)
-                .ignoresSafeArea(edges: .top)
+            // 背景层显式上移 topInset 到物理顶（布局帧不动）：绘制
+            // 总高经 extraTop 同步加 topInset，图像映射与 NX 一致；
+            // 安全线以上一段被 ScrollView 视口裁掉，由页面根的
+            // coverTopBleed 同映射补画（Phase 28，见头部注）
+            headerBackdrop(image: resolution.image, hasBanner: hasBanner, topInset: topInset, extraTop: topInset)
+                .offset(y: -topInset)
         }
         .background {
             GeometryReader { geo in
                 Color.clear
-                    .onAppear { headerWidth = geo.size.width }
+                    .onAppear {
+                        headerWidth = geo.size.width
+                        headerHeight = geo.size.height
+                        headerOriginY = geo.frame(in: .named(Self.pageCoordinateSpace)).minY
+                    }
                     .onChange(of: geo.size.width) { headerWidth = $0 }
+                    .onChange(of: geo.size.height) { headerHeight = $0 }
+                    .onChange(of: geo.frame(in: .named(Self.pageCoordinateSpace)).minY) { headerOriginY = $0 }
             }
+        }
+    }
+
+    /// 顶部出血条（Phase 28）：与封面头同体的一份 headerBackdrop，
+    /// 挂在页面根 ZStack（ScrollView 之外，不受滚动视口裁剪），专
+    /// 画安全线以上那一带。帧高 = 头部实高 + topInset、extraTop
+    /// = 0，绘制总高与头内那份相同（帧高 + 160），图像映射一致；
+    /// 纵向位置 = 头部当前 minY − topInset：静止时其顶落在物理
+    /// 顶，上滚时与头内背景同速同向移动（头内背景在安全线处显
+    /// 出的图像行与本条下缘严丝合缝，推导：两者在窗口坐标里的
+    /// 绘制原点恒为同一值 headerOriginY − topInset）。topInset
+    /// = 0（横屏面板形态）时不渲染、逐点同现行；无横图（图标模
+    /// 糊兜底）时同体背景同样出血。不拦截触摸。
+    @ViewBuilder
+    private var coverTopBleed: some View {
+        let topInset = LCSidePanelSpec.windowTopSafeInset
+        if topInset > 0, headerHeight > 0 {
+            let resolution = coverResolution
+            headerBackdrop(image: resolution.image, hasBanner: resolution.source != .icon, topInset: topInset, extraTop: 0)
+                .frame(height: headerHeight + topInset)
+                .offset(y: headerOriginY - topInset)
+                .allowsHitTesting(false)
         }
     }
 
@@ -576,8 +635,13 @@ struct LCGameSettingsView: View {
     /// 图顶（背景帧已出血到物理顶）——亮封面下状态栏的时钟与电量
     /// 靠它保可读；NX 结构里此 overlay 盖在图层组全体之上，有 /
     /// 无横图都生效。
+    /// 绘制总高（Phase 28）：geo 高 + extraTop + 160。两个实例共用
+    /// 本函数且映射恒等——头内实例帧高 = 头部高、extraTop =
+    /// topInset（帧再经 .offset 上移 topInset）；页面根出血条实例
+    /// 帧高 = 头部高 + topInset、extraTop = 0。两者总高同为头部高
+    /// + topInset + 160、绘制原点同为物理顶 + 滚动位移。
     @ViewBuilder
-    private func headerBackdrop(image: UIImage?, hasBanner: Bool, topInset: CGFloat) -> some View {
+    private func headerBackdrop(image: UIImage?, hasBanner: Bool, topInset: CGFloat, extraTop: CGFloat) -> some View {
         GeometryReader { geo in
             Group {
                 if hasBanner, let image {
@@ -585,19 +649,19 @@ struct LCGameSettingsView: View {
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFill()
-                            .frame(width: geo.size.width, height: geo.size.height + 160)
+                            .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
                         LinearGradient(stops: [
                             .init(color: .clear, location: 0.3),
                             .init(color: .black.opacity(0.4), location: 0.6),
                             .init(color: .black.opacity(0.55), location: 1),
                         ], startPoint: .top, endPoint: .bottom)
-                        .frame(width: geo.size.width, height: geo.size.height + 160)
+                        .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
                     }
                 } else if let image {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height + 160)
+                        .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
                         .scaleEffect(1.4)
                         .blur(radius: 40)
                         .saturation(1.2)
@@ -606,7 +670,7 @@ struct LCGameSettingsView: View {
                     Color.clear
                 }
             }
-            .frame(width: geo.size.width, height: geo.size.height + 160, alignment: .top)
+            .frame(width: geo.size.width, height: geo.size.height + extraTop + 160, alignment: .top)
             .overlay(alignment: .top) {
                 if topInset > 0 {
                     LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .top, endPoint: .bottom)
