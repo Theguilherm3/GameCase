@@ -10,6 +10,7 @@
 //
 
 import SwiftUI
+import GameController
 
 // MARK: - 游戏库配色（自旧 LCGameCardView 抽出的共享常量，设置页 / 导入页也在用）
 
@@ -68,6 +69,10 @@ struct LCGameHomeView: View {
     let multiLCStatus: Int
     let installProgressVisible: Bool
     let installProgress: Float
+    /// 真实安全区：由 LCAppListView 从不忽略安全区的层级读出后注入。
+    /// 本视图内部 GeometryReader 带 .ignoresSafeArea()，它读到的
+    /// geo.safeAreaInsets 恒为 0，不能直接用作浮钮排的定位依据。
+    let safeAreaInsets: EdgeInsets
 
     var onRun: (LCAppModel) -> Void
     var onSettings: (LCAppModel) -> Void
@@ -81,6 +86,8 @@ struct LCGameHomeView: View {
 
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
     @State private var focusKey: String?
+    @StateObject private var controllerMonitor = LCControllerMonitor()
+    @State private var controllerListPresented = false
 
     // MARK: 聚焦与状态推导
 
@@ -181,14 +188,14 @@ struct LCGameHomeView: View {
                 LCGameTheme.pageBackground
                     .ignoresSafeArea()
                 if apps.isEmpty {
-                    emptyState(size: size, safeTop: geo.safeAreaInsets.top, safeBottom: geo.safeAreaInsets.bottom)
+                    emptyState(size: size, safeTop: safeAreaInsets.top, safeBottom: safeAreaInsets.bottom)
                 } else if size.width > size.height {
-                    landscape(size: size, safe: geo.safeAreaInsets)
+                    landscape(size: size, safe: safeAreaInsets)
                 } else {
-                    portrait(size: size, safe: geo.safeAreaInsets)
+                    portrait(size: size, safe: safeAreaInsets)
                 }
                 if installProgressVisible {
-                    installPill(safeTop: geo.safeAreaInsets.top)
+                    installPill(safeTop: safeAreaInsets.top)
                 }
             }
             .frame(width: size.width, height: size.height)
@@ -202,8 +209,13 @@ struct LCGameHomeView: View {
         }
     }
 
-    private func margin(for width: CGFloat) -> CGFloat {
-        min(max(width * 0.093, 20), 84)
+    /// 水平边距对齐 NX2 壳真机截图实测：竖屏 ≈ 屏宽 5.9%（393pt 宽 ≈ 23pt），
+    /// 横屏顶排左距 ≈ 屏宽 10.2%。旧值 9.3% 是竖屏留白过多的来源。
+    private func margin(for size: CGSize) -> CGFloat {
+        if size.width > size.height {
+            return min(max(size.width * 0.102, 24), 120)
+        }
+        return min(max(size.width * 0.059, 18), 40)
     }
 
     // MARK: 通用小件
@@ -241,24 +253,84 @@ struct LCGameHomeView: View {
         .buttonStyle(.plain)
     }
 
-    /// 手柄胶囊：NX 原样装饰，无动作
+    /// 手柄胶囊（对齐 NX 壳语义）：数字 = 当前已连接手柄数（GameController 实时
+    /// 监听连接/断开刷新），点击弹出已连接手柄列表。尺寸与位置沿用原常量，只接行为。
     private func gamepadCapsule(height: CGFloat) -> some View {
-        ZStack {
-            Capsule()
-                .fill(LCGameTheme.chipBackground)
-            Capsule()
-                .strokeBorder(LCGameTheme.chipBorder, lineWidth: 1)
-            HStack(spacing: 8) {
-                Image(systemName: "gamecontroller")
-                    .font(.system(size: height * 0.42))
-                Text("0")
-                    .font(.system(size: height * 0.4, weight: .bold))
+        Button {
+            controllerListPresented = true
+        } label: {
+            ZStack {
+                Capsule()
+                    .fill(LCGameTheme.chipBackground)
+                Capsule()
+                    .strokeBorder(LCGameTheme.chipBorder, lineWidth: 1)
+                HStack(spacing: 8) {
+                    Image(systemName: "gamecontroller")
+                        .font(.system(size: height * 0.42))
+                    Text("\(controllerMonitor.controllers.count)")
+                        .font(.system(size: height * 0.4, weight: .bold))
+                }
+                .foregroundColor(LCGameTheme.chipIcon)
+                .padding(.horizontal, height * 0.32)
             }
-            .foregroundColor(LCGameTheme.chipIcon)
-            .padding(.horizontal, height * 0.32)
+            .frame(height: height)
+            .fixedSize(horizontal: true, vertical: false)
         }
-        .frame(height: height)
-        .fixedSize(horizontal: true, vertical: false)
+        .buttonStyle(.plain)
+        .popover(isPresented: $controllerListPresented) {
+            controllerListContent
+        }
+    }
+
+    /// 已连接手柄列表小层：逐个列名称与类型，无手柄时显示「未连接手柄」
+    @ViewBuilder
+    private var controllerListContent: some View {
+        let content = VStack(alignment: .leading, spacing: 14) {
+            Text("已连接手柄")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.white)
+            if controllerMonitor.controllers.isEmpty {
+                Text("未连接手柄")
+                    .font(.system(size: 14))
+                    .foregroundColor(LCGameTheme.mutedText)
+            } else {
+                ForEach(controllerMonitor.controllers, id: \.self) { controller in
+                    HStack(spacing: 10) {
+                        Image(systemName: "gamecontroller.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(LCGameTheme.chipIcon)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(controller.vendorName ?? "游戏手柄")
+                                .font(.system(size: 14.5, weight: .semibold))
+                                .foregroundColor(.white)
+                            Text(controllerTypeText(controller))
+                                .font(.system(size: 12.5))
+                                .foregroundColor(LCGameTheme.mutedText)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(22)
+        .frame(minWidth: 250, alignment: .leading)
+        .background(LCGameTheme.pageBackground)
+        .preferredColorScheme(.dark)
+
+        if #available(iOS 16.0, *) {
+            content.presentationDetents([.height(240)])
+        } else {
+            content
+        }
+    }
+
+    private func controllerTypeText(_ controller: GCController) -> String {
+        if controller.extendedGamepad != nil {
+            return "扩展游戏手柄"
+        }
+        if controller.microGamepad != nil {
+            return "微型游戏手柄"
+        }
+        return "游戏手柄"
     }
 
     /// ＋导入菜单：导入 IPA / 导入数据包（现有两条导入实现），外加隐藏游戏恢复入口
@@ -371,8 +443,8 @@ struct LCGameHomeView: View {
                 }
                 Spacer()
             }
-            .padding(.top, safeTop + 10)
-            .padding(.horizontal, margin(for: size.width))
+            .padding(.top, safeTop + 6)
+            .padding(.horizontal, margin(for: size))
 
             VStack(spacing: 18) {
                 Image(systemName: "gamecontroller")
@@ -422,7 +494,7 @@ struct LCGameHomeView: View {
                     }
                 }
             }
-            .padding(.horizontal, margin(for: size.width))
+            .padding(.horizontal, margin(for: size))
         }
     }
 
@@ -430,12 +502,12 @@ struct LCGameHomeView: View {
 
     private func portrait(size: CGSize, safe: EdgeInsets) -> some View {
         let w = size.width
-        let m = margin(for: w)
+        let m = margin(for: size)
         let heroH = max(size.height * 0.39, 280)
         return ZStack(alignment: .bottom) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    portraitHero(width: w, height: heroH, safeTop: safe.top)
+                    portraitHero(width: w, height: heroH, safeTop: safe.top, margin: m)
                     portraitGames(margin: m, width: w)
                     portraitRecent(margin: m, width: w)
                     if multiLCStatus == 2 {
@@ -454,7 +526,7 @@ struct LCGameHomeView: View {
         }
     }
 
-    private func portraitHero(width: CGFloat, height: CGFloat, safeTop: CGFloat) -> some View {
+    private func portraitHero(width: CGFloat, height: CGFloat, safeTop: CGFloat, margin m: CGFloat) -> some View {
         ZStack {
             if let app = focusedApp {
                 LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
@@ -490,8 +562,10 @@ struct LCGameHomeView: View {
                     Spacer()
                     chromeRow(diameter: 40, includeSliders: false)
                 }
-                .padding(.top, safeTop + 10)
-                .padding(.trailing, margin(for: width))
+                // 浮钮排落在真实安全区之下（safeTop 由列表层注入，不再是被
+                // .ignoresSafeArea() 归零的值），+6 后约在屏高 7% 处，不碰灵动岛
+                .padding(.top, safeTop + 6)
+                .padding(.trailing, m)
                 Spacer()
             }
             // 左下状态 + 标题 + 版本
@@ -515,7 +589,7 @@ struct LCGameHomeView: View {
                             .foregroundColor(LCGameTheme.mutedText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, margin(for: width))
+                    .padding(.horizontal, m)
                     .padding(.bottom, 16)
                 }
             }
@@ -692,8 +766,9 @@ struct LCGameHomeView: View {
                         }
                     }
                 }
+                // NX 竖屏实测：开始胶囊下缘距屏底 ≈ 42pt ≈ 安全区 34 + 8
                 .padding(.horizontal, m)
-                .padding(.bottom, safeBottom + 24)
+                .padding(.bottom, safeBottom + 8)
             }
         }
         .ignoresSafeArea(edges: .bottom)
@@ -704,9 +779,9 @@ struct LCGameHomeView: View {
     private func landscape(size: CGSize, safe: EdgeInsets) -> some View {
         let w = size.width
         let h = size.height
-        let m = margin(for: w)
-        let focusedW = w * 0.36
-        let centerY = h * 0.53
+        let m = margin(for: size)
+        let focusedW = w * 0.385
+        let centerY = h * 0.54
         return ZStack {
             // 封面色调背景：聚焦封面重模糊 + 压暗（照预览取值）
             if let app = focusedApp {
@@ -768,7 +843,8 @@ struct LCGameHomeView: View {
                     Spacer()
                     chromeRow(diameter: 41, includeSliders: true)
                 }
-                .padding(.top, safe.top + 14)
+                // 顶排对齐 NX 横屏：钮面约在屏高 4% 处起（图标中心 ≈ 7%）
+                .padding(.top, safe.top + size.height * 0.04)
                 .padding(.horizontal, m)
                 Spacer()
             }
@@ -795,14 +871,15 @@ struct LCGameHomeView: View {
         }
     }
 
-    /// 轮播里第 index 张卡的中心 X：聚焦卡左缘在屏宽 19.6% 处，邻卡依次紧贴（照预览几何）
+    /// 轮播里第 index 张卡的中心 X：聚焦卡左缘在屏宽 20.8% 处，邻卡依次紧贴
+    /// （NX 横屏实测：聚焦卡宽 ≈ 38.5%、邻卡 ≈ 30%）
     private func carouselCenterX(for index: Int, width w: CGFloat) -> CGFloat {
-        let focusedW = w * 0.36
-        let neighborW = w * 0.235
+        let focusedW = w * 0.385
+        let neighborW = w * 0.30
         func cardWidth(_ i: Int) -> CGFloat {
             i == focusIndex ? focusedW : neighborW
         }
-        var center = w * 0.196 + focusedW / 2
+        var center = w * 0.208 + focusedW / 2
         if index == focusIndex {
             return center
         }
@@ -823,8 +900,8 @@ struct LCGameHomeView: View {
 
     private func carousel(size: CGSize, centerY: CGFloat) -> some View {
         let w = size.width
-        let focusedW = w * 0.36
-        let neighborW = w * 0.235
+        let focusedW = w * 0.385
+        let neighborW = w * 0.30
         return ZStack {
             ForEach(apps.indices, id: \.self) { idx in
                 let app = apps[idx]
@@ -876,6 +953,36 @@ struct LCGameHomeView: View {
             }
         }
         .frame(width: w, height: size.height)
+    }
+}
+
+// MARK: - 已连接手柄监听（手柄胶囊数据源）
+
+/// 实时维护已连接手柄列表：初始读 GCController.controllers()，之后靠
+/// 连接/断开通知刷新。启动一次无线发现，让已配对的无线手柄尽早枚举出来。
+private final class LCControllerMonitor: ObservableObject {
+    @Published var controllers: [GCController] = []
+
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        refresh()
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in
+            self?.refresh()
+        })
+        observers.append(center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in
+            self?.refresh()
+        })
+        GCController.startWirelessControllerDiscovery {}
+    }
+
+    deinit {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    private func refresh() {
+        controllers = GCController.controllers()
     }
 }
 

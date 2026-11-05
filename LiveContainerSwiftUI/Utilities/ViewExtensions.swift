@@ -102,7 +102,10 @@ public struct DocModifier: ViewModifier {
                 controller.allowsMultipleSelection = multiple
                 controller.delegate = delegate
                 self.docController = controller
-                sceneDelegate.window?.rootViewController?.present(controller, animated: true)
+                // 必须挂在顶层 VC 上：呈现方（如容器设置页）本身是 sheet 时，
+                // rootViewController 已在呈现中，对它再调 present 会被系统
+                // 静默拒绝，表现为点了按钮毫无反应（导入证书即此症）
+                UIViewController.lcTopmost(from: sceneDelegate.window?.rootViewController)?.present(controller, animated: true)
             } else if !isPresented, let docController = docController {
                 docController.dismiss(animated: true)
                 self.docController = nil
@@ -152,7 +155,8 @@ public struct TextFieldAlertModifier: ViewModifier {
             if isPresented, alertController == nil {
                 let alertController = makeAlertController()
                 self.alertController = alertController
-                sceneDelegate.window?.rootViewController?.present(alertController, animated: true)
+                // 同 DocModifier：挂顶层 VC，避免在 sheet 内被静默拒绝
+                UIViewController.lcTopmost(from: sceneDelegate.window?.rootViewController)?.present(alertController, animated: true)
             } else if !isPresented, let alertController = alertController {
                 alertController.dismiss(animated: true)
                 self.alertController = nil
@@ -335,6 +339,18 @@ struct IconImageView: View {
 
 
 extension UIViewController {
+    /// 沿 presentedViewController 链走到的最顶层 VC。
+    /// 对已在呈现其它 VC 的控制器再调 present，UIKit 只打一条警告便静默
+    /// 拒绝；本仓多处 UIKit 呈现（文件选择、文本输入弹窗）都应以此为锚点，
+    /// 这样呈现方无论是普通页面还是 sheet 都能可靠弹出。
+    static func lcTopmost(from root: UIViewController?) -> UIViewController? {
+        var top = root
+        while let presented = top?.presentedViewController {
+            top = presented
+        }
+        return top
+    }
+
     func presentConfirmation(
         title: String,
         message: String,

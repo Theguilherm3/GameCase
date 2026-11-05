@@ -120,7 +120,15 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     func openGameSettings(app: LCAppModel) {
         openNavigationView(view: AnyView(LCGameSettingsView(
             app: app,
-            onRun: { runGame(app: app) },
+            onRun: {
+                // 启动编排归本层统一负责：先关设置页，等弹出完成再启动。
+                // JIT 确认 sheet 与错误弹窗都锚在本层，设置页还盖在上面时
+                // 它们弹不出来，启动会无声卡住（与隐藏页 onRun 同一编排）。
+                closeNavigationView()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    runGame(app: app)
+                }
+            },
             onOpenDataFolder: { openGameDataFolder(app: app) },
             onClose: { closeNavigationView() }
         )))
@@ -181,23 +189,28 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 .hidden()
 
                 // 游戏库主页（NX2Apple 壳式界面）：呈现与聚焦在 LCGameHomeView，
-                // 启动 / 设置 / 导入 / 卸载全部回调回本视图的既有机制
-                LCGameHomeView(
-                    apps: sortedApps,
-                    hiddenAppsCount: sharedModel.hiddenApps.count,
-                    multiLCStatus: sharedModel.multiLCStatus,
-                    installProgressVisible: installprogressVisible,
-                    installProgress: installProgressPercentage,
-                    onRun: { runGame(app: $0) },
-                    onSettings: { openGameSettings(app: $0) },
-                    onOpenDataFolder: { openGameDataFolder(app: $0) },
-                    onImportDatapack: { datapackImportRequest = LCDatapackRequest(app: $0) },
-                    onUninstall: { appPendingUninstall = $0 },
-                    onImportIPA: { choosingIPA = true },
-                    onImportDatapackGeneric: { datapackImportRequest = LCDatapackRequest(app: nil) },
-                    onOpenHiddenApps: { openHiddenApps() },
-                    onOpenContainerSettings: { containerSettingsPresented = true }
-                )
+                // 启动 / 设置 / 导入 / 卸载全部回调回本视图的既有机制。
+                // 这一层不忽略安全区，GeometryReader 读到的是真实 safeAreaInsets，
+                // 注入主页供浮钮排定位（主页内部为全屏出血忽略了安全区，读不到）。
+                GeometryReader { proxy in
+                    LCGameHomeView(
+                        apps: sortedApps,
+                        hiddenAppsCount: sharedModel.hiddenApps.count,
+                        multiLCStatus: sharedModel.multiLCStatus,
+                        installProgressVisible: installprogressVisible,
+                        installProgress: installProgressPercentage,
+                        safeAreaInsets: proxy.safeAreaInsets,
+                        onRun: { runGame(app: $0) },
+                        onSettings: { openGameSettings(app: $0) },
+                        onOpenDataFolder: { openGameDataFolder(app: $0) },
+                        onImportDatapack: { datapackImportRequest = LCDatapackRequest(app: $0) },
+                        onUninstall: { appPendingUninstall = $0 },
+                        onImportIPA: { choosingIPA = true },
+                        onImportDatapackGeneric: { datapackImportRequest = LCDatapackRequest(app: nil) },
+                        onOpenHiddenApps: { openHiddenApps() },
+                        onOpenContainerSettings: { containerSettingsPresented = true }
+                    )
+                }
             }
             .navigationBarHidden(true)
             .navigationBarProgressBar(show: $installprogressVisible, progress: $installProgressPercentage)
@@ -210,7 +223,25 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         .navigationViewStyle(StackNavigationViewStyle())
         .preferredColorScheme(.dark)
         .sheet(isPresented: $containerSettingsPresented) {
-            LCSettingsView()
+            // 关闭钮不在 LCSettingsView 里加：它那个 Form 表达式已逼近编译器
+            // 类型检查上限（往里加工具栏直接超时编译不过）；改在呈现层包一
+            // 层，左上角叠一个与工具栏同位的「关闭」钮盖在导航栏行上。
+            // 深链（证书类）也流经这一处，同样带按钮。
+            ZStack(alignment: .topLeading) {
+                LCSettingsView()
+                Button {
+                    containerSettingsPresented = false
+                } label: {
+                    Text("关闭")
+                        .font(.system(size: 16))
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 8)
+                        .frame(height: 36)
+                        .contentShape(Rectangle())
+                }
+                .padding(.leading, 8)
+                .padding(.top, 4)
+            }
         }
         .onChange(of: sharedModel.selectedTab) { tab in
             // 底栏已摘除：证书等深链要求去设置页时，改以 sheet 呈现容器设置
@@ -1183,8 +1214,14 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     }
     
     func closeNavigationView() {
-        isNavigationActive = false
-        navigateTo = nil
+        // 关页只翻转激活态，destination 保留到下次 openNavigationView 覆盖。
+        // 原写法在同一事务里既置 isNavigationActive=false 又把 navigateTo 置 nil：
+        // NavigationLink 会先按新 destination 重建、去激活随之被吞，真机表现为
+        // 设置页顶部按钮点了毫无反应。此处再异步一拍翻转，避开目标页自身按钮
+        // 事件处理中的同步状态写。关页自此只有这一条路径。
+        DispatchQueue.main.async {
+            isNavigationActive = false
+        }
     }
     
     func copyError() {
