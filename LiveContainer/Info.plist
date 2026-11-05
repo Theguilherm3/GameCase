@@ -322,5 +322,25 @@
 	</array>
 	<key>UISupportsDocumentBrowser</key>
 	<true/>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>RomFS Disk Image</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.kdt.livecontainer.romfs-image</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>img</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>
