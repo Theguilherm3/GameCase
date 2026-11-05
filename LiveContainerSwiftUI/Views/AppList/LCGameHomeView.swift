@@ -331,9 +331,10 @@ struct LCGameHomeView: View {
                 // 手柄页自适应宿主（Phase 22）：横屏 = 右侧抽屉面板
                 // （主页留在下层被压暗）、竖屏 = 整屏，形态随旋转跟随，
                 // 语义与容器设置 / 游戏设置同轨
-                // 顶部声明 hostProvidesTopInset（Phase 24）：手柄页无
-                // NavigationView、无顶部处理，整屏形态由宿主垫回安全区
-                LCSidePanelContainer(isPresented: controllerPanelPresented, onClose: { controllerPanelPresented = false }, topBehavior: .hostProvidesTopInset) {
+                // 顶部（Phase 26）：手柄页无 NavigationView，整屏形态的
+                // 内容下移由页面自己在背景内侧垫（见 LCControllersView），
+                // 宿主不外垫、不裁圆角
+                LCSidePanelContainer(isPresented: controllerPanelPresented, onClose: { controllerPanelPresented = false }) {
                     LCControllersView(monitor: controllerMonitor, onClose: { controllerPanelPresented = false })
                 }
             }
