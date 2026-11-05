@@ -147,17 +147,7 @@ struct LCSettingsView: View {
                     }
                 }
                 
-                if #available(iOS 16.1, *) {
-                    Section {
-                        NavigationLink {
-                            LCMultitaskSettingView()
-                        } label: {
-                            Text("lc.appBanner.multitask".loc)
-                        }
-                    } footer: {
-                        Text("lc.settings.multitaskDesc".loc)
-                    }
-                }
+                // 专用游戏容器：多任务恒关，设置页不再提供多任务入口（LCMultitaskSettingView 文件保留未引用）
                 
                 Section {
                     if JITEnabler == .SideJITServer || JITEnabler == .JITStreamerEBLegacy {

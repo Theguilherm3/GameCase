@@ -240,17 +240,7 @@ struct LCAppSettingsView: View {
                 }
             }
             
-            if #available(iOS 16.0, *) {
-                Section {
-                    Picker(selection: $model.uiIsMultitaskModeSpecificed) {
-                        Text("lc.common.default".loc).tag(MultitaskSpecified.default)
-                        Text("lc.common.no".loc).tag(MultitaskSpecified.no)
-                        Text("lc.common.yes".loc).tag(MultitaskSpecified.yes)
-                    } label: {
-                        Text("lc.appBanner.multitask".loc)
-                    }
-                }
-            }
+            // 专用游戏容器：单应用设置不再提供多任务开关（启动恒为串行单开）
             
             Section {
                 NavigationLink {
