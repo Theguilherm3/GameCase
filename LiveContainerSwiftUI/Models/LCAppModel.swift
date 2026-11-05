@@ -201,6 +201,25 @@ class LCAppModel: ObservableObject, Hashable {
         }
     }
     
+    /// 按当前 appInfo 记录重算容器名单与选中容器（选中规则与 init 一致：folderName
+    /// 与 dataUUID 一致者）。init 只在模型创建时算一次快照，进程内高级页改默认容器、
+    /// 重装、容器增删等动作改的都是 appInfo 记录，快照不跟随就会脱钩——设置页按旧
+    /// 快照读到的容器可能既不是记录里的默认容器、也不是客体刚写完偏好的那个，
+    /// 表现就是设置/数据包状态整页停在旧容器上。打开设置页前调它对齐到记录，
+    /// 与 runApp 读的 uiSelectedContainer 同源同值。
+    func refreshContainerSelection() {
+        uiContainers = appInfo.containers
+        uiDefaultDataFolder = appInfo.dataUUID
+        if let uuid = appInfo.dataUUID,
+           let match = uiContainers.first(where: { $0.folderName == uuid }) {
+            uiSelectedContainer = match
+        } else if let current = uiSelectedContainer,
+                  !uiContainers.contains(where: { $0.folderName == current.folderName }) {
+            // 快照里的选中容器已不在名单内：清掉，defaultContainer 回退名单首个
+            uiSelectedContainer = nil
+        }
+    }
+
     static func == (lhs: LCAppModel, rhs: LCAppModel) -> Bool {
         return lhs === rhs
     }
