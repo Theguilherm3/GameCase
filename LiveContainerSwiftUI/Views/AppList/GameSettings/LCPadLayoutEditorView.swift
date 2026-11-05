@@ -45,27 +45,37 @@ struct LCPadLayoutEditorView: View {
         ZStack {
             backgroundView
             GeometryReader { geo in
-                VStack(spacing: 10) {
-                    header
-                    if geo.size.width >= 700 {
+                if geo.size.width >= 700 {
+                    // 横屏：左画布右面板固定排布；底部多留一段避开浮动底栏胶囊
+                    VStack(spacing: 10) {
+                        header
                         HStack(alignment: .top, spacing: 14) {
                             canvas
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                             panel
                                 .frame(width: 330)
                         }
-                    } else {
+                    }
+                    .padding(14)
+                    .padding(.bottom, 76)
+                } else {
+                    // 竖屏：整页可滚动——上方画布按屏宽等比，下方完整面板全部可达；
+                    // 画布上的按键拖动手势用 highPriorityGesture，不被页面滚动抢走
+                    ScrollView {
                         VStack(spacing: 10) {
+                            header
                             canvas
                                 .frame(maxWidth: .infinity)
                                 .aspectRatio(16 / 9, contentMode: .fit)
                             panel
                         }
+                        .padding(14)
+                        .padding(.bottom, 96)
                     }
                 }
-                .padding(14)
             }
         }
+        .hideTabBarOnPush()
         .preferredColorScheme(.dark)
         .navigationBarHidden(true)
         .confirmationDialog("全部重置？", isPresented: $confirmResetAll, titleVisibility: .visible) {
@@ -107,7 +117,7 @@ struct LCPadLayoutEditorView: View {
                         .font(.footnote.bold())
                     Text("游戏设置")
                 }
-                .foregroundColor(LCGameCardView.creamColor)
+                .foregroundColor(LCGameTheme.creamColor)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
                 .background(Color.black.opacity(0.55))
@@ -116,7 +126,7 @@ struct LCPadLayoutEditorView: View {
             }
             Text("\(game.displayName) · 按键布局（仅战斗页）")
                 .font(.headline)
-                .foregroundColor(LCGameCardView.creamColor)
+                .foregroundColor(LCGameTheme.creamColor)
             Spacer()
         }
     }
@@ -153,7 +163,7 @@ struct LCPadLayoutEditorView: View {
             .frame(width: d, height: d)
             .overlay { if selected == key.name { selectionRing(d) } }
             .position(c)
-            .gesture(dragGesture(key.name, in: size))
+            .highPriorityGesture(dragGesture(key.name, in: size))
             .onTapGesture { selected = key.name }
             .zIndex(selected == key.name || drag?.name == key.name ? 2 : 1)
     }
@@ -181,7 +191,7 @@ struct LCPadLayoutEditorView: View {
         .frame(width: d, height: d)
         .overlay { if selected == "stick" { selectionRing(d) } }
         .position(c)
-        .gesture(dragGesture("stick", in: size))
+        .highPriorityGesture(dragGesture("stick", in: size))
         .onTapGesture { selected = "stick" }
         .zIndex(selected == "stick" || drag?.name == "stick" ? 2 : 1)
     }
@@ -271,7 +281,7 @@ struct LCPadLayoutEditorView: View {
             HStack {
                 Text("按键布局")
                     .font(.title3.bold())
-                    .foregroundColor(LCGameCardView.creamColor)
+                    .foregroundColor(LCGameTheme.creamColor)
                 Spacer()
                 Button {
                     presentationMode.wrappedValue.dismiss()
@@ -366,7 +376,7 @@ struct LCPadLayoutEditorView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.white.opacity(0.2), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .foregroundColor(LCGameCardView.creamColor)
+        .foregroundColor(LCGameTheme.creamColor)
         .disabled(selected == nil)
     }
 
@@ -380,7 +390,7 @@ struct LCPadLayoutEditorView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.white.opacity(0.2), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .foregroundColor(LCGameCardView.creamColor)
+        .foregroundColor(LCGameTheme.creamColor)
         .disabled(selected == nil)
     }
 

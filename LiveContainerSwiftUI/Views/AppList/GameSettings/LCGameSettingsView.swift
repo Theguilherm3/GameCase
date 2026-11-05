@@ -15,8 +15,10 @@ struct LCGameSettingsView: View {
     @ObservedObject var app: LCAppModel
     var onRun: () -> Void
     var onOpenDataFolder: () -> Void
+    /// 关闭本页回到游戏库：本页是被列表用隐藏 NavigationLink 推进来的，
+    /// 只能走列表的 closeNavigationView 弹出，presentationMode.dismiss() 对 push 无效。
+    var onClose: () -> Void
 
-    @Environment(\.presentationMode) private var presentationMode
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
 
     @State private var prefs: LCGamePrefs?
@@ -60,8 +62,10 @@ struct LCGameSettingsView: View {
                 footerNote
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 32)
+            // 底部留白 ≥ 浮动底栏胶囊高度 + 间距：即使底栏未隐藏，最后一行也能滚到胶囊上方
+            .padding(.bottom, 110)
         }
+        .hideTabBarOnPush()
         .background(Self.pageBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .navigationBarHidden(true)
@@ -89,14 +93,14 @@ struct LCGameSettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Button {
-                    presentationMode.wrappedValue.dismiss()
+                    onClose()
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
                             .font(.footnote.bold())
                         Text("游戏库")
                     }
-                    .foregroundColor(LCGameCardView.creamColor)
+                    .foregroundColor(LCGameTheme.creamColor)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 9)
                     .background(Color.white.opacity(0.08))
@@ -104,6 +108,10 @@ struct LCGameSettingsView: View {
                 }
                 Spacer()
                 Button {
+                    // 先退回游戏库再启动：启动流程要用的 JIT 确认 sheet 与错误弹窗都挂在
+                    // 列表视图上，本页盖在上面时它们弹不出来，启动会无声卡住；
+                    // 退回列表后与点卡片「启动」走完全同一条路。
+                    onClose()
                     onRun()
                 } label: {
                     Text("启动")
@@ -120,7 +128,7 @@ struct LCGameSettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(app.displayName)
                     .font(.title2.bold())
-                    .foregroundColor(LCGameCardView.creamColor)
+                    .foregroundColor(LCGameTheme.creamColor)
                 Text("\(knownGame?.shortName ?? app.displayName) · \(app.version) · 设置写入游戏容器，下次启动生效")
                     .font(.footnote)
                     .foregroundColor(.gray)
@@ -313,7 +321,7 @@ struct LCGameSettingsView: View {
             } label: {
                 HStack(spacing: 5) {
                     Text(setting.optionLabel(for: value))
-                        .foregroundColor(locked ? .gray : LCGameCardView.creamColor)
+                        .foregroundColor(locked ? .gray : LCGameTheme.creamColor)
                     Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundColor(.gray)
@@ -351,7 +359,7 @@ struct LCGameSettingsView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .foregroundColor(locked ? .gray : LCGameCardView.creamColor)
+            .foregroundColor(locked ? .gray : LCGameTheme.creamColor)
             .disabled(locked)
         default:
             Text(value)
