@@ -11,18 +11,18 @@
     {
       "beta": false,
       "name": "GameCase (nightly)",
-      "bundleIdentifier": "com.kdt.livecontainer",
-      "developerName": "LiveContainer Team",
+      "bundleIdentifier": "com.tiaoge.gamecase",
+      "developerName": "GameCase",
       "subtitle": "Run iOS apps without actually installing them!",
-      "version": "3.4.50",
-      "versionDate": "2025-04-26",
-      "versionDescription": "This is a nightly release [created automatically with GitHub Actions workflow](https://github.com/LiveContainer/LiveContainer/actions/runs/14679205373/attempts/1).",
-      "downloadURL": "https://github.com/LiveContainer/LiveContainer/releases/download/nightly/LiveContainer.ipa",
+      "version": "3.8.11",
+      "versionDate": "2026-11-05T14:10:20Z",
+      "versionDescription": "Nightly build from [20de6e1](https://github.com/Tiaoge-tou/GameCase/commit/20de6e1): Merge pull request 7 from Tiaoge-tou/docs/remove-loadcontrol-note\n\nThis is a nightly release [created automatically with GitHub Actions workflow](https://github.com/Tiaoge-tou/GameCase/actions/runs/42043895444/attempts/1).\n",
+      "downloadURL": "https://github.com/Tiaoge-tou/GameCase/releases/download/nightly/GameCase.ipa",
       "localizedDescription": "Run iOS apps without actually installing them!",
-      "iconURL": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/screenshots/AppIcon1024.png",
+      "iconURL": "https://raw.githubusercontent.com/Tiaoge-tou/GameCase/main/screenshots/AppIcon1024.png",
       "tintColor": "#0784FC",
       "category": "utilities",
-      "size": 2785962,
+      "size": 14184552,
       "screenshotURLs": [
         "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/screenshots/1.png"
       ],
@@ -80,13 +80,17 @@
       },
       "versions": [
         {
-          "version": "3.4.50",
-          "date": "2025-04-26T07:00:00Z",
-          "localizedDescription": "This is a nightly release [created automatically with GitHub Actions workflow](https://github.com/LiveContainer/LiveContainer/actions/runs/14679205373/attempts/1).",
-          "downloadURL": "https://github.com/LiveContainer/LiveContainer/releases/download/nightly/LiveContainer.ipa",
-          "size": 2785962
+          "version": "3.8.11",
+          "date": "2026-11-05T14:10:20Z",
+          "localizedDescription": "Nightly build from [20de6e1](https://github.com/Tiaoge-tou/GameCase/commit/20de6e1): Merge pull request 7 from Tiaoge-tou/docs/remove-loadcontrol-note\n\nThis is a nightly release [created automatically with GitHub Actions workflow](https://github.com/Tiaoge-tou/GameCase/actions/runs/42043895444/attempts/1).\n",
+          "downloadURL": "https://github.com/Tiaoge-tou/GameCase/releases/download/nightly/GameCase.ipa",
+          "size": 14184552,
+          "commit": "20de6e1",
+          "headline": "Merge pull request #7 from Tiaoge-tou/docs/remove-loadcontrol-note"
         }
-      ]
+      ],
+      "commit": "20de6e1",
+      "headline": "Merge pull request #7 from Tiaoge-tou/docs/remove-loadcontrol-note"
     }
   ],
   "news": []

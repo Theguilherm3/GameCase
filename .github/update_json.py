@@ -14,6 +14,35 @@ def prepare_description(text):
     text = re.sub(r'\r\n\r\n', '\r \n', text) # Replace \r\n\r\n with \r \n (avoid incorrect display of the description regarding paragraphs)
     return text
 
+def load_source_data(repo_url, filename):
+    # Base copy of a source JSON: it lives as an asset on the latest stable
+    # release (fall back to the nightly release, then to the repo seed file).
+    # This replaces the old fixed "1.0" hosting release, which has been removed.
+    try:
+        response = requests.get(f"https://api.github.com/repos/{repo_url}/releases",
+                                headers={"Accept": "application/vnd.github+json"})
+        response.raise_for_status()
+        releases = response.json()
+    except requests.RequestException:
+        releases = []
+
+    def rank(release):
+        if release.get("tag_name") == "nightly":
+            return 1
+        if release.get("draft") or release.get("prerelease"):
+            return 2
+        return 0
+
+    for release in sorted(releases, key=rank):
+        for asset in release.get("assets", []):
+            if asset["name"] == filename:
+                r = requests.get(asset["browser_download_url"])
+                r.raise_for_status()
+                return r.json()
+
+    with open(f"./.github/{filename}", "r") as file:
+        return json.load(file)
+
 def fetch_latest_release(repo_url, is_nightly: bool):
     api_url = f"https://api.github.com/repos/{repo_url}/releases"
     headers = {
@@ -48,15 +77,7 @@ def update_json_file_release(repo_url, json_file, latest_release):
         print("Error getting latest release")
         return
 
-    try:
-        apps_json_url = f"https://github.com/{repo_url}/releases/download/1.0/apps.json"
-        response = requests.get(apps_json_url)
-        response.raise_for_status()
-        data = response.json()
-    except json.JSONDecodeError as e:
-        print(f"Error reading JSON file: {e}")
-        data = {"apps": []}
-        raise
+    data = load_source_data(repo_url, "apps.json")
 
     app = data["apps"][0]
 
@@ -76,7 +97,7 @@ def update_json_file_release(repo_url, json_file, latest_release):
     download_url = None
     size = None
     for asset in assets:
-        if asset["name"] == f"LiveContainer.ipa":
+        if asset["name"] == f"GameCase.ipa":
             download_url = asset["browser_download_url"]
             size = asset["size"]
             break
@@ -177,7 +198,7 @@ This is a nightly release [created automatically with GitHub Actions workflow]({
     download_url = None
     size = None
     for asset in assets:
-        if asset["name"] == f"LiveContainer.ipa":
+        if asset["name"] == f"GameCase.ipa":
             download_url = asset["browser_download_url"]
             size = asset["size"]
             break
@@ -226,15 +247,7 @@ def update_json_file_release_ss_lc(repo_url, json_file, latest_release, is_night
         print("Error getting latest release")
         return
 
-    try:
-        apps_json_url = f"https://github.com/{repo_url}/releases/download/1.0/apps_ss_lc.json"
-        response = requests.get(apps_json_url)
-        response.raise_for_status()
-        data = response.json()
-    except json.JSONDecodeError as e:
-        print(f"Error reading JSON file: {e}")
-        data = {"apps": []}
-        raise
+    data = load_source_data(repo_url, "apps_ss_lc.json")
 
     app = data["apps"][0]
 
@@ -258,7 +271,7 @@ Nightly build from [{commit_sha}](https://github.com/Tiaoge-tou/GameCase/commit/
     download_url = None
     size = None
     for asset in assets:
-        if asset["name"] == f"LiveContainer+SideStore.ipa":
+        if asset["name"] == f"GameCase+SideStore.ipa":
             download_url = asset["browser_download_url"]
             size = asset["size"]
             break
