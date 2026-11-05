@@ -248,29 +248,336 @@ static void *getAppEntryPoint(void *handle) {
     return (void *)header + entryoff;
 }
 
-#pragma mark - [exp/dock-r1 实验] 进程内直跑「返回游戏库」浮动钮
-// 目标形态与正式包一致：游戏在本进程内全屏直跑（standalone 路径），只在客体场景之上
-// 多一个高层级小窗按钮。同进程内恢复宿主 UI 不可行——invokeAppMain 跳入客体 main 后
-// 不返回，客体 main 一旦返回会被 LiveContainerMain 当错误串处理并终止进程，宿主 UI
-// 从未在本进程加载。因此点击动作走 LC 自带的自拉起机制：清掉 selected 后调用
-// launchToGuestAppWithClassicMode:，它用 lcMainBundle（覆写前捕获的原 LC 包）向
-// LSApplicationWorkspace 请求打开 LC 自身、随后 SIGKILL 本进程；新启的 LC 进程因
-// selected 已清而直接进入游戏库。客体进程随之终止（串行单开，符合既定规格）。
-@interface LCDockReturnHandler : NSObject
-+ (instancetype)sharedHandler;
-- (void)attachToActiveSceneIfNeeded;
+#pragma mark - 快捷栏（游戏内「返回游戏库」）
+// 形态：游戏在本进程内全屏直跑（standalone 路径），客体场景之上挂一个高层级小窗，
+// 承载可四边吸附的玻璃舌与展开快捷栏。同进程内恢复宿主 UI 不可行——invokeAppMain
+// 跳入客体 main 后不返回，宿主 UI 从未在本进程加载——因此回库动作沿用已真机验证的
+// 自拉起机制：清掉 selected 后调用 launchToGuestAppWithClassicMode:，新启的 LC 进程
+// 因 selected 已清而直接进入游戏库，客体进程随之终止（串行单开，符合既定规格）。
+//
+// 状态机：吸附态（玻璃舌半藏于所吸边）→ 点击展开（完整胶囊自所吸边滑出）→
+// 点「游戏库」回库 / 点栏外或 3 秒无操作收回吸附态。舌与栏均可拖动，松手吸附最近边。
+// 持久化：本进程的 standardUserDefaults 已被客体钩子改指到客体容器（见
+// Tweaks/NSUserDefaults.m 的 NUDGuestHooksInit），不能存宿主状态；改用宿主容器内
+// 显式路径的 plist（LC_HOME_PATH/Library/Preferences/LCQuickBar.plist），存所吸边、
+// 沿边位置比例与回库 returning 标记，库侧 LCAppListView 读同一文件消费 returning。
+
+typedef NS_ENUM(NSInteger, LCQuickBarEdge) {
+    LCQuickBarEdgeRight = 0,
+    LCQuickBarEdgeLeft = 1,
+    LCQuickBarEdgeTop = 2,
+    LCQuickBarEdgeBottom = 3,
+};
+
+typedef NS_ENUM(NSInteger, LCQBDirection) {
+    LCQBDirectionLeft,
+    LCQBDirectionRight,
+    LCQBDirectionUp,
+    LCQBDirectionDown,
+};
+
+// 舌全尺寸 44×76pt、约 41% 半藏（露出 26pt）；展开胶囊高 46pt、离边 12pt（下边 20pt 避指示条）。
+static const CGFloat LCQBTongueThickness = 44;
+static const CGFloat LCQBTongueLength = 76;
+static const CGFloat LCQBTongueVisible = 26;
+static const CGFloat LCQBBarHeight = 46;
+static const CGFloat LCQBBarGap = 12;
+static const CGFloat LCQBBarGapBottom = 20;
+static const CGFloat LCQBBottomBandHalf = 90; // 下边中央禁带半宽（Home 指示条横穿区）
+static const NSTimeInterval LCQBAutoCollapseDelay = 3;
+
+#pragma mark - 状态文件
+
+static NSString *LCQBStatePath(void) {
+    const char *home = getenv("LC_HOME_PATH");
+    NSString *base = home ? [NSString stringWithUTF8String:home] : NSHomeDirectory();
+    return [base stringByAppendingPathComponent:@"Library/Preferences/LCQuickBar.plist"];
+}
+
+static NSMutableDictionary *LCQBLoadState(void) {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:LCQBStatePath()];
+    return dict ? [dict mutableCopy] : [NSMutableDictionary dictionary];
+}
+
+static void LCQBSaveState(NSDictionary *state) {
+    NSString *path = LCQBStatePath();
+    [NSFileManager.defaultManager createDirectoryAtPath:path.stringByDeletingLastPathComponent
+                            withIntermediateDirectories:YES attributes:nil error:nil];
+    [state writeToFile:path atomically:YES];
+}
+
+#pragma mark - 图标绘制（与预览稿同构的白色线形图标）
+
+static UIImage *LCQBRenderImage(CGSize size, void (^draw)(void)) {
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size];
+    return [renderer imageWithActions:^(UIGraphicsImageRendererContext *rendererContext) {
+        draw();
+    }];
+}
+
+// 六点握把：竖向 2 列 × 3 行，横向 3 列 × 2 行
+static UIImage *LCQBGripImage(BOOL vertical) {
+    CGSize size = vertical ? CGSizeMake(11, 17) : CGSizeMake(17, 11);
+    return LCQBRenderImage(size, ^{
+        [[UIColor colorWithWhite:1 alpha:0.55] setFill];
+        CGFloat vCols[2] = {0.27, 0.73};
+        CGFloat vRows[3] = {0.16, 0.5, 0.84};
+        CGFloat hCols[3] = {0.16, 0.5, 0.84};
+        CGFloat hRows[2] = {0.27, 0.73};
+        CGFloat *colFrac = vertical ? vCols : hCols;
+        CGFloat *rowFrac = vertical ? vRows : hRows;
+        int cols = vertical ? 2 : 3;
+        int rows = vertical ? 3 : 2;
+        for (int i = 0; i < cols; i++) {
+            for (int j = 0; j < rows; j++) {
+                CGFloat cx = size.width * colFrac[i];
+                CGFloat cy = size.height * rowFrac[j];
+                [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(cx - 1.2, cy - 1.2, 2.4, 2.4)] fill];
+            }
+        }
+    });
+}
+
+static UIImage *LCQBGamepadImage(void) {
+    CGSize size = CGSizeMake(18, 18);
+    return LCQBRenderImage(size, ^{
+        CGFloat w = size.width, h = size.height;
+        UIColor *ink = [UIColor colorWithWhite:1 alpha:0.92];
+        [ink setStroke];
+        [ink setFill];
+        UIBezierPath *body = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(w * 0.05, h * 0.28, w * 0.90, h * 0.46)
+                                                        cornerRadius:h * 0.23];
+        body.lineWidth = 1.4;
+        [body stroke];
+        CGFloat cx = w * 0.30, cy = h * 0.51, a = w * 0.09;
+        UIBezierPath *plus = [UIBezierPath bezierPath];
+        [plus moveToPoint:CGPointMake(cx - a, cy)];
+        [plus addLineToPoint:CGPointMake(cx + a, cy)];
+        [plus moveToPoint:CGPointMake(cx, cy - a)];
+        [plus addLineToPoint:CGPointMake(cx, cy + a)];
+        plus.lineWidth = 1.4;
+        [plus stroke];
+        CGFloat r = w * 0.05;
+        [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(w * 0.68 - r, h * 0.43 - r, 2 * r, 2 * r)] fill];
+        [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(w * 0.81 - r, h * 0.57 - r, 2 * r, 2 * r)] fill];
+    });
+}
+
+static UIImage *LCQBChevronImage(LCQBDirection dir) {
+    CGSize size = CGSizeMake(12, 12);
+    return LCQBRenderImage(size, ^{
+        CGFloat w = size.width, h = size.height;
+        CGPoint p1, p2, p3;
+        switch (dir) {
+            case LCQBDirectionLeft:
+                p1 = CGPointMake(w * 0.66, h * 0.16); p2 = CGPointMake(w * 0.30, h * 0.50); p3 = CGPointMake(w * 0.66, h * 0.84);
+                break;
+            case LCQBDirectionRight:
+                p1 = CGPointMake(w * 0.34, h * 0.16); p2 = CGPointMake(w * 0.70, h * 0.50); p3 = CGPointMake(w * 0.34, h * 0.84);
+                break;
+            case LCQBDirectionUp:
+                p1 = CGPointMake(w * 0.16, h * 0.66); p2 = CGPointMake(w * 0.50, h * 0.30); p3 = CGPointMake(w * 0.84, h * 0.66);
+                break;
+            case LCQBDirectionDown:
+                p1 = CGPointMake(w * 0.16, h * 0.34); p2 = CGPointMake(w * 0.50, h * 0.70); p3 = CGPointMake(w * 0.84, h * 0.34);
+                break;
+        }
+        UIBezierPath *path = [UIBezierPath bezierPath];
+        [path moveToPoint:p1];
+        [path addLineToPoint:p2];
+        [path addLineToPoint:p3];
+        path.lineWidth = 1.6;
+        path.lineJoinStyle = kCGLineJoinRound;
+        path.lineCapStyle = kCGLineCapRound;
+        [[UIColor colorWithWhite:1 alpha:0.78] setStroke];
+        [path stroke];
+    });
+}
+
+static UIImage *LCQBHouseImage(CGFloat side, CGFloat alpha, CGFloat lineWidth) {
+    return LCQBRenderImage(CGSizeMake(side, side), ^{
+        CGFloat w = side, h = side;
+        [[UIColor colorWithWhite:1 alpha:alpha] setStroke];
+        UIBezierPath *roof = [UIBezierPath bezierPath];
+        [roof moveToPoint:CGPointMake(w * 0.08, h * 0.52)];
+        [roof addLineToPoint:CGPointMake(w * 0.50, h * 0.12)];
+        [roof addLineToPoint:CGPointMake(w * 0.92, h * 0.52)];
+        roof.lineWidth = lineWidth;
+        roof.lineJoinStyle = kCGLineJoinRound;
+        roof.lineCapStyle = kCGLineCapRound;
+        [roof stroke];
+        UIBezierPath *body = [UIBezierPath bezierPath];
+        [body moveToPoint:CGPointMake(w * 0.22, h * 0.42)];
+        [body addLineToPoint:CGPointMake(w * 0.22, h * 0.88)];
+        [body addLineToPoint:CGPointMake(w * 0.78, h * 0.88)];
+        [body addLineToPoint:CGPointMake(w * 0.78, h * 0.42)];
+        body.lineWidth = lineWidth;
+        body.lineJoinStyle = kCGLineJoinRound;
+        body.lineCapStyle = kCGLineCapRound;
+        [body stroke];
+        UIBezierPath *door = [UIBezierPath bezierPath];
+        [door moveToPoint:CGPointMake(w * 0.44, h * 0.88)];
+        [door addLineToPoint:CGPointMake(w * 0.44, h * 0.66)];
+        [door addLineToPoint:CGPointMake(w * 0.56, h * 0.66)];
+        [door addLineToPoint:CGPointMake(w * 0.56, h * 0.88)];
+        door.lineWidth = lineWidth;
+        door.lineJoinStyle = kCGLineJoinRound;
+        [door stroke];
+    });
+}
+
+#pragma mark - 触摸视图（轻点/拖动判别，与游戏触摸共存）
+// 手工跟踪触摸：累计位移超过 8pt 才算拖动（此前不挪位置），轻点走 onTap。
+// 拖动用增量位移回调——视图随手指同移，增量天然不受视图自身移动污染。
+
+@interface LCQBTouchView : UIView
+@property (nonatomic, copy, nullable) void (^onTap)(void);
+@property (nonatomic, copy, nullable) void (^onTouchBegan)(void);
+@property (nonatomic, copy, nullable) void (^onDragDelta)(CGPoint delta);
+@property (nonatomic, copy, nullable) void (^onDragEnded)(void);
 @end
 
-static UIWindow *lcDockReturnWindow;
-static BOOL lcDockReturnInstallAttempted;
+@implementation LCQBTouchView {
+    CGPoint _lastPoint;
+    CGFloat _travel;
+    BOOL _dragging;
+}
 
-@implementation LCDockReturnHandler
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    _lastPoint = [touches.anyObject locationInView:self];
+    _travel = 0;
+    _dragging = NO;
+    if (self.onTouchBegan) self.onTouchBegan();
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    CGPoint p = [touches.anyObject locationInView:self];
+    CGPoint delta = CGPointMake(p.x - _lastPoint.x, p.y - _lastPoint.y);
+    _lastPoint = p;
+    _travel += fabs(delta.x) + fabs(delta.y);
+    if (!_dragging && _travel > 8) _dragging = YES;
+    if (_dragging && self.onDragDelta) self.onDragDelta(delta);
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (_dragging) {
+        if (self.onDragEnded) self.onDragEnded();
+    } else if (self.onTap) {
+        self.onTap();
+    }
+    _dragging = NO;
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (_dragging && self.onDragEnded) self.onDragEnded();
+    _dragging = NO;
+}
+
+@end
+
+#pragma mark - 处理器
+
+@class LCQuickBarHandler;
+
+@interface LCQuickBarHandler : NSObject
++ (instancetype)sharedHandler;
+- (void)attachToActiveSceneIfNeeded;
+- (void)collapseFromOutsideTap;
+- (void)relayoutForBounds:(CGRect)bounds;
+@end
+
+@interface LCQBRootView : UIView
+@property (nonatomic, weak) LCQuickBarHandler *handler;
+@end
+
+@implementation LCQBRootView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    if (hit == self) {
+        // 展开态下窗口全屏：点到栏外先收栏，且返回 nil 不吞这次触摸、让游戏接管。
+        // 吸附态窗口只有舌大小，落到这里也只是让 collapseFromOutsideTap 空转。
+        [self.handler collapseFromOutsideTap];
+        return nil;
+    }
+    return hit;
+}
+@end
+
+@interface LCQBRootViewController : UIViewController
+@property (nonatomic, weak) LCQuickBarHandler *handler;
+@end
+
+@implementation LCQBRootViewController
+- (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
+    [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
+    [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
+        [self.handler relayoutForBounds:CGRectMake(0, 0, size.width, size.height)];
+    } completion:nil];
+}
+@end
+
+#pragma mark - 毛玻璃容器
+
+// 深色毛玻璃：系统暗色模糊 + rgba(20,20,24) 染色近似预览稿的 .55 压暗，
+// 白 0.18 描边，阴影挂在不裁剪的外层 wrapper 上。
+static UIView *LCQBMakeGlass(CGFloat cornerRadius, UIView **outContentView) {
+    UIView *wrapper = [[UIView alloc] init];
+    wrapper.backgroundColor = UIColor.clearColor;
+    wrapper.layer.shadowColor = UIColor.blackColor.CGColor;
+    wrapper.layer.shadowOpacity = 0.35;
+    wrapper.layer.shadowRadius = 10;
+    wrapper.layer.shadowOffset = CGSizeMake(0, 4);
+    UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:
+        [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+    blur.layer.cornerRadius = cornerRadius;
+    blur.layer.borderWidth = 1;
+    blur.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.18].CGColor;
+    blur.clipsToBounds = YES;
+    [wrapper addSubview:blur];
+    UIView *tint = [[UIView alloc] init];
+    tint.backgroundColor = [UIColor colorWithRed:20.0 / 255 green:20.0 / 255 blue:24.0 / 255 alpha:0.30];
+    tint.userInteractionEnabled = NO;
+    [blur.contentView addSubview:tint];
+    if (outContentView) *outContentView = blur.contentView;
+    return wrapper;
+}
+
+@implementation LCQuickBarHandler {
+    UIWindow *_window;
+    LCQBRootView *_rootView;
+    UIWindowScene *_scene;
+    BOOL _attached;
+
+    UIView *_tongueGlass;
+    UIView *_tongueContent;
+    LCQBTouchView *_tongueTouch;
+    UIImageView *_gripView;
+    UIImageView *_gamepadView;
+    UIImageView *_chevronView;
+
+    UIView *_barGlass;
+    UIView *_barContent;
+    LCQBTouchView *_barTouch;
+    UIButton *_collapseButton;
+    CGFloat _barWidth;
+
+    UIWindow *_veilWindow;
+    NSTimer *_collapseTimer;
+
+    LCQuickBarEdge _edge;
+    CGFloat _ratio;
+    BOOL _expanded;
+    BOOL _returning;
+}
+
 + (instancetype)sharedHandler {
-    static LCDockReturnHandler *handler;
+    static LCQuickBarHandler *handler;
     static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{ handler = [LCDockReturnHandler new]; });
+    dispatch_once(&onceToken, ^{ handler = [LCQuickBarHandler new]; });
     return handler;
 }
+
+#pragma mark 挂载
 
 - (void)sceneDidActivate:(NSNotification *)note {
     if ([note.object isKindOfClass:UIWindowScene.class]) {
@@ -281,7 +588,7 @@ static BOOL lcDockReturnInstallAttempted;
 }
 
 - (void)attachToActiveSceneIfNeeded {
-    if (lcDockReturnWindow) return;
+    if (_attached) return;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if ([scene isKindOfClass:UIWindowScene.class] &&
             scene.activationState == UISceneActivationStateForegroundActive) {
@@ -292,65 +599,445 @@ static BOOL lcDockReturnInstallAttempted;
 }
 
 - (void)attachToScene:(UIWindowScene *)scene {
-    if (lcDockReturnWindow || !scene) return;
-    CGFloat W = 100, H = 46;
-    CGRect bounds = scene.coordinateSpace.bounds;
+    if (_attached || !scene) return;
+    _attached = YES;
+    _scene = scene;
+    [self loadPersistedState];
+    [self buildViews];
+
     UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene];
     window.windowLevel = UIWindowLevelAlert + 100;
-    window.frame = CGRectMake(CGRectGetWidth(bounds) - W - 10,
-                              CGRectGetMidY(bounds) - H / 2, W, H);
     window.backgroundColor = UIColor.clearColor;
-
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-    button.frame = CGRectMake(0, 0, W, H);
-    button.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
-    button.layer.cornerRadius = 12;
-    button.clipsToBounds = YES;
-    button.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-    [button setTitle:@"游戏库" forState:UIControlStateNormal];
-    [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    [button addTarget:self action:@selector(returnToLibrary) forControlEvents:UIControlEventTouchUpInside];
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-    [button addGestureRecognizer:pan];
-
-    UIViewController *rootVC = [UIViewController new];
-    rootVC.view = button;
+    LCQBRootView *rootView = [[LCQBRootView alloc] init];
+    rootView.handler = self;
+    rootView.backgroundColor = UIColor.clearColor;
+    LCQBRootViewController *rootVC = [LCQBRootViewController new];
+    rootVC.handler = self;
+    rootVC.view = rootView;
     window.rootViewController = rootVC;
+    [rootView addSubview:_tongueGlass];
+    [rootView addSubview:_barGlass];
+    _rootView = rootView;
+    _window = window;
+    [self layoutForBounds:scene.coordinateSpace.bounds];
     window.hidden = NO;
-    lcDockReturnWindow = window;
-    NSLog(@"[LCBootstrap][dock-r1] 返回游戏库浮动钮已挂载");
+    NSLog(@"[LCBootstrap][quickbar] 快捷栏已挂载（edge=%ld, ratio=%.2f）", (long)_edge, _ratio);
 }
 
-- (void)handlePan:(UIPanGestureRecognizer *)pan {
-    UIWindow *window = lcDockReturnWindow;
-    if (!window) return;
-    CGPoint translation = [pan translationInView:window];
-    CGPoint center = window.center;
-    center.x += translation.x;
-    center.y += translation.y;
-    CGRect bounds = window.windowScene.coordinateSpace.bounds;
-    center.x = MAX(40, MIN(center.x, CGRectGetWidth(bounds) - 40));
-    center.y = MAX(40, MIN(center.y, CGRectGetHeight(bounds) - 40));
-    window.center = center;
-    [pan setTranslation:CGPointZero inView:window];
+#pragma mark 视图构建
+
+- (void)buildViews {
+    __weak LCQuickBarHandler *weakSelf = self;
+
+    // 吸附舌：触摸层在底，图标不拦截触摸、透传给触摸层
+    UIView *tongueContent = nil;
+    _tongueGlass = LCQBMakeGlass(15, &tongueContent);
+    _tongueContent = tongueContent;
+    LCQBTouchView *tongueTouch = [[LCQBTouchView alloc] init];
+    tongueTouch.onTap = ^{ [weakSelf expand]; };
+    tongueTouch.onDragDelta = ^(CGPoint delta) { [weakSelf dragWindowBy:delta]; };
+    tongueTouch.onDragEnded = ^{ [weakSelf finishDragFromTongue]; };
+    [_tongueContent addSubview:tongueTouch];
+    _tongueTouch = tongueTouch;
+    _gripView = [[UIImageView alloc] init];
+    _gamepadView = [[UIImageView alloc] init];
+    _chevronView = [[UIImageView alloc] init];
+    [_tongueContent addSubview:_gripView];
+    [_tongueContent addSubview:_gamepadView];
+    [_tongueContent addSubview:_chevronView];
+
+    // 展开栏：横向胶囊，横排常量与预览稿一致（pt）
+    UIView *barContent = nil;
+    _barGlass = LCQBMakeGlass(LCQBBarHeight / 2, &barContent);
+    _barGlass.hidden = YES;
+    _barContent = barContent;
+    LCQBTouchView *barTouch = [[LCQBTouchView alloc] init];
+    barTouch.onTouchBegan = ^{ [weakSelf resetCollapseTimer]; };
+    barTouch.onTap = ^{ [weakSelf resetCollapseTimer]; };
+    barTouch.onDragDelta = ^(CGPoint delta) { [weakSelf dragBarBy:delta]; };
+    barTouch.onDragEnded = ^{ [weakSelf finishDragFromBar]; };
+    [_barContent addSubview:barTouch];
+    _barTouch = barTouch;
+
+    UIImageView *barGrip = [[UIImageView alloc] initWithImage:LCQBGripImage(YES)];
+    barGrip.frame = CGRectMake(13, (LCQBBarHeight - 17) / 2, 11, 17);
+    [_barContent addSubview:barGrip];
+    UIView *separator = [[UIView alloc] initWithFrame:CGRectMake(34, (LCQBBarHeight - 22) / 2, 1, 22)];
+    separator.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16];
+    [_barContent addSubview:separator];
+
+    UIFont *labelFont = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
+    CGFloat textWidth = ceil([@"游戏库" sizeWithAttributes:@{NSFontAttributeName: labelFont}].width);
+    CGFloat pillWidth = 11 + 19 + 8 + textWidth + 13;
+    UIButton *pill = [UIButton buttonWithType:UIButtonTypeCustom];
+    pill.frame = CGRectMake(45, (LCQBBarHeight - 32) / 2, pillWidth, 32);
+    pill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.13];
+    pill.layer.cornerRadius = 16;
+    pill.layer.borderWidth = 1;
+    pill.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.10].CGColor;
+    pill.clipsToBounds = YES;
+    UIImageView *house = [[UIImageView alloc] initWithImage:LCQBHouseImage(19, 1.0, 1.5)];
+    house.frame = CGRectMake(11, (32 - 19) / 2, 19, 19);
+    [pill addSubview:house];
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(11 + 19 + 8, 0, textWidth + 2, 32)];
+    label.text = @"游戏库";
+    label.font = labelFont;
+    label.textColor = UIColor.whiteColor;
+    [pill addSubview:label];
+    [pill addTarget:self action:@selector(resetCollapseTimer) forControlEvents:UIControlEventTouchDown];
+    [pill addTarget:self action:@selector(returnToLibrary) forControlEvents:UIControlEventTouchUpInside];
+    [_barContent addSubview:pill];
+
+    UIButton *collapse = [UIButton buttonWithType:UIButtonTypeCustom];
+    collapse.frame = CGRectMake(45 + pillWidth + 8, (LCQBBarHeight - 30) / 2, 28, 30);
+    [collapse addTarget:self action:@selector(collapseAnimated) forControlEvents:UIControlEventTouchUpInside];
+    [_barContent addSubview:collapse];
+    _collapseButton = collapse;
+
+    _barWidth = 45 + pillWidth + 8 + 28 + 6;
 }
+
+#pragma mark 持久化
+
+- (void)loadPersistedState {
+    NSDictionary *state = LCQBLoadState();
+    NSNumber *edge = state[@"edge"];
+    NSNumber *ratio = state[@"ratio"];
+    _edge = edge ? (LCQuickBarEdge)edge.integerValue : LCQuickBarEdgeRight;
+    if (_edge < LCQuickBarEdgeRight || _edge > LCQuickBarEdgeBottom) _edge = LCQuickBarEdgeRight;
+    _ratio = ratio ? ratio.doubleValue : 0.5;
+    _ratio = MAX(0, MIN(1, _ratio));
+}
+
+- (void)persistState {
+    NSMutableDictionary *state = LCQBLoadState();
+    state[@"edge"] = @(_edge);
+    state[@"ratio"] = @(_ratio);
+    LCQBSaveState(state);
+}
+
+#pragma mark 几何与布局
+
+- (BOOL)isVerticalEdge {
+    return _edge == LCQuickBarEdgeLeft || _edge == LCQuickBarEdgeRight;
+}
+
+// 沿边中心点：比例换算后钳制在两角内侧；下边再避开中央 180pt 指示条禁带，落带内时滑到带外最近处
+- (CGFloat)alongCenterForBounds:(CGRect)bounds {
+    CGFloat axis = [self isVerticalEdge] ? bounds.size.height : bounds.size.width;
+    CGFloat center = _ratio * axis;
+    CGFloat half = LCQBTongueLength / 2 + 6;
+    center = MAX(half, MIN(center, axis - half));
+    if (_edge == LCQuickBarEdgeBottom) {
+        CGFloat mid = bounds.size.width / 2;
+        if (center > mid - LCQBBottomBandHalf && center < mid + LCQBBottomBandHalf) {
+            center = (center < mid) ? mid - LCQBBottomBandHalf : mid + LCQBBottomBandHalf;
+            center = MAX(half, MIN(center, bounds.size.width - half));
+        }
+    }
+    return center;
+}
+
+- (CGRect)dockedFrameForBounds:(CGRect)bounds {
+    CGFloat center = [self alongCenterForBounds:bounds];
+    CGFloat tucked = LCQBTongueThickness - LCQBTongueVisible; // 18
+    switch (_edge) {
+        case LCQuickBarEdgeRight:
+            return CGRectMake(bounds.size.width - LCQBTongueVisible, center - LCQBTongueLength / 2,
+                              LCQBTongueThickness, LCQBTongueLength);
+        case LCQuickBarEdgeLeft:
+            return CGRectMake(-tucked, center - LCQBTongueLength / 2,
+                              LCQBTongueThickness, LCQBTongueLength);
+        case LCQuickBarEdgeTop:
+            return CGRectMake(center - LCQBTongueLength / 2, -tucked,
+                              LCQBTongueLength, LCQBTongueThickness);
+        case LCQuickBarEdgeBottom:
+            return CGRectMake(center - LCQBTongueLength / 2, bounds.size.height - LCQBTongueVisible,
+                              LCQBTongueLength, LCQBTongueThickness);
+    }
+    return CGRectZero;
+}
+
+- (CGRect)barFrameForBounds:(CGRect)bounds {
+    CGFloat center = [self alongCenterForBounds:bounds];
+    CGFloat w = _barWidth, h = LCQBBarHeight;
+    switch (_edge) {
+        case LCQuickBarEdgeRight: {
+            CGFloat y = MAX(8, MIN(center - h / 2, bounds.size.height - h - 8));
+            return CGRectMake(bounds.size.width - LCQBBarGap - w, y, w, h);
+        }
+        case LCQuickBarEdgeLeft: {
+            CGFloat y = MAX(8, MIN(center - h / 2, bounds.size.height - h - 8));
+            return CGRectMake(LCQBBarGap, y, w, h);
+        }
+        case LCQuickBarEdgeTop: {
+            CGFloat x = MAX(8, MIN(center - w / 2, bounds.size.width - w - 8));
+            return CGRectMake(x, LCQBBarGap, w, h);
+        }
+        case LCQuickBarEdgeBottom: {
+            CGFloat x = MAX(8, MIN(center - w / 2, bounds.size.width - w - 8));
+            return CGRectMake(x, bounds.size.height - LCQBBarGapBottom - h, w, h);
+        }
+    }
+    return CGRectZero;
+}
+
+- (void)sizeGlass:(UIView *)glass {
+    UIVisualEffectView *blur = (UIVisualEffectView *)glass.subviews.firstObject;
+    blur.frame = glass.bounds;
+    blur.contentView.subviews.firstObject.frame = blur.bounds; // 染色层
+}
+
+- (void)layoutForBounds:(CGRect)bounds {
+    if (!_window) return;
+    if (_expanded) {
+        _window.frame = bounds;
+        _rootView.frame = bounds;
+        _barGlass.frame = [self barFrameForBounds:bounds];
+        [self sizeGlass:_barGlass];
+        _barTouch.frame = _barContent.bounds;
+        _tongueGlass.hidden = YES;
+        _barGlass.hidden = NO;
+    } else {
+        CGRect frame = [self dockedFrameForBounds:bounds];
+        _window.frame = frame;
+        _rootView.frame = CGRectMake(0, 0, frame.size.width, frame.size.height);
+        _tongueGlass.frame = _rootView.bounds;
+        [self sizeGlass:_tongueGlass];
+        [self layoutTongueContent];
+        _tongueGlass.hidden = NO;
+        _barGlass.hidden = YES;
+    }
+    [self refreshChevronImages];
+}
+
+- (void)relayoutForBounds:(CGRect)bounds {
+    [self layoutForBounds:bounds];
+}
+
+// 舌内元素沿长轴依次排：握把 17、间 9、手柄 18、间 9、箭头 11，共 64，居中于长轴；
+// 横轴对准可见带中心（贴边一侧 18pt 藏在屏外）。
+- (void)layoutTongueContent {
+    _tongueTouch.frame = _tongueContent.bounds;
+    BOOL vertical = [self isVerticalEdge];
+    CGFloat stripCenter = LCQBTongueVisible / 2;
+    switch (_edge) {
+        case LCQuickBarEdgeRight: stripCenter = LCQBTongueVisible / 2; break;
+        case LCQuickBarEdgeLeft: stripCenter = LCQBTongueThickness - LCQBTongueVisible / 2; break;
+        case LCQuickBarEdgeTop: stripCenter = LCQBTongueThickness - LCQBTongueVisible / 2; break;
+        case LCQuickBarEdgeBottom: stripCenter = LCQBTongueVisible / 2; break;
+    }
+    _gripView.image = LCQBGripImage(vertical);
+    _gamepadView.image = LCQBGamepadImage();
+    CGFloat along[3] = {17, 18, 11};
+    CGFloat cross[3] = {11, 18, 11};
+    UIView *views[3] = {_gripView, _gamepadView, _chevronView};
+    CGFloat pos = (LCQBTongueLength - 64) / 2;
+    for (int i = 0; i < 3; i++) {
+        if (vertical) {
+            views[i].frame = CGRectMake(stripCenter - cross[i] / 2, pos, cross[i], along[i]);
+        } else {
+            views[i].frame = CGRectMake(pos, stripCenter - cross[i] / 2, along[i], cross[i]);
+        }
+        pos += along[i] + 9;
+    }
+}
+
+// 吸附态箭头指向屏内（展开方向）；展开态箭头指向所吸边（收回方向）
+- (void)refreshChevronImages {
+    LCQBDirection dockedDir = LCQBDirectionLeft, barDir = LCQBDirectionRight;
+    switch (_edge) {
+        case LCQuickBarEdgeRight: dockedDir = LCQBDirectionLeft; barDir = LCQBDirectionRight; break;
+        case LCQuickBarEdgeLeft: dockedDir = LCQBDirectionRight; barDir = LCQBDirectionLeft; break;
+        case LCQuickBarEdgeTop: dockedDir = LCQBDirectionDown; barDir = LCQBDirectionUp; break;
+        case LCQuickBarEdgeBottom: dockedDir = LCQBDirectionUp; barDir = LCQBDirectionDown; break;
+    }
+    _chevronView.image = LCQBChevronImage(dockedDir);
+    [_collapseButton setImage:LCQBChevronImage(barDir) forState:UIControlStateNormal];
+}
+
+#pragma mark 展开/收起
+
+- (CGAffineTransform)edgeTranslation:(CGFloat)distance {
+    switch (_edge) {
+        case LCQuickBarEdgeRight: return CGAffineTransformMakeTranslation(distance, 0);
+        case LCQuickBarEdgeLeft: return CGAffineTransformMakeTranslation(-distance, 0);
+        case LCQuickBarEdgeTop: return CGAffineTransformMakeTranslation(0, -distance);
+        case LCQuickBarEdgeBottom: return CGAffineTransformMakeTranslation(0, distance);
+    }
+    return CGAffineTransformIdentity;
+}
+
+- (void)expand {
+    if (_expanded || !_window) return;
+    _expanded = YES;
+    CGRect bounds = _scene.coordinateSpace.bounds;
+    _window.frame = bounds;
+    _rootView.frame = bounds;
+    _barGlass.frame = [self barFrameForBounds:bounds];
+    [self sizeGlass:_barGlass];
+    _barTouch.frame = _barContent.bounds;
+    [self refreshChevronImages];
+    _tongueGlass.hidden = YES;
+    _barGlass.hidden = NO;
+    UIView *bar = _barGlass;
+    bar.alpha = 0;
+    bar.transform = [self edgeTranslation:28];
+    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        bar.alpha = 1;
+        bar.transform = CGAffineTransformIdentity;
+    } completion:nil];
+    [self resetCollapseTimer];
+}
+
+- (void)collapseAnimated {
+    if (!_expanded) return;
+    _expanded = NO;
+    [self invalidateCollapseTimer];
+    UIView *bar = _barGlass;
+    CGAffineTransform slide = [self edgeTranslation:28];
+    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        bar.alpha = 0;
+        bar.transform = slide;
+    } completion:^(BOOL finished) {
+        bar.hidden = YES;
+        bar.alpha = 1;
+        bar.transform = CGAffineTransformIdentity;
+        [self layoutForBounds:self->_scene.coordinateSpace.bounds];
+    }];
+}
+
+- (void)collapseFromOutsideTap {
+    if (_expanded) [self collapseAnimated];
+}
+
+- (void)resetCollapseTimer {
+    [_collapseTimer invalidate];
+    _collapseTimer = nil;
+    if (!_expanded) return;
+    _collapseTimer = [NSTimer scheduledTimerWithTimeInterval:LCQBAutoCollapseDelay
+                                                       target:self
+                                                     selector:@selector(collapseFromTimer)
+                                                     userInfo:nil
+                                                      repeats:NO];
+}
+
+- (void)collapseFromTimer {
+    [self collapseAnimated];
+}
+
+- (void)invalidateCollapseTimer {
+    [_collapseTimer invalidate];
+    _collapseTimer = nil;
+}
+
+#pragma mark 拖动与吸附
+
+- (void)dragWindowBy:(CGPoint)delta {
+    CGRect frame = _window.frame;
+    frame.origin.x += delta.x;
+    frame.origin.y += delta.y;
+    _window.frame = frame;
+}
+
+- (void)dragBarBy:(CGPoint)delta {
+    CGRect frame = _barGlass.frame;
+    frame.origin.x += delta.x;
+    frame.origin.y += delta.y;
+    _barGlass.frame = frame;
+    [self resetCollapseTimer];
+}
+
+// 以给定中心点定所吸边（到四边距离最近者）与沿边比例，落盘后由调用方动画归位
+- (void)snapFromCenter:(CGPoint)center inBounds:(CGRect)bounds {
+    CGFloat dLeft = center.x, dRight = bounds.size.width - center.x;
+    CGFloat dTop = center.y, dBottom = bounds.size.height - center.y;
+    CGFloat nearest = MIN(MIN(dLeft, dRight), MIN(dTop, dBottom));
+    if (nearest == dLeft) _edge = LCQuickBarEdgeLeft;
+    else if (nearest == dRight) _edge = LCQuickBarEdgeRight;
+    else if (nearest == dTop) _edge = LCQuickBarEdgeTop;
+    else _edge = LCQuickBarEdgeBottom;
+    _ratio = [self isVerticalEdge] ? center.y / bounds.size.height : center.x / bounds.size.width;
+    _ratio = MAX(0, MIN(1, _ratio));
+    [self persistState];
+}
+
+- (void)finishDragFromTongue {
+    CGRect bounds = _scene.coordinateSpace.bounds;
+    [self snapFromCenter:_window.center inBounds:bounds];
+    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        [self layoutForBounds:bounds];
+    } completion:nil];
+}
+
+- (void)finishDragFromBar {
+    CGRect bounds = _scene.coordinateSpace.bounds;
+    CGPoint center = CGPointMake(CGRectGetMidX(_barGlass.frame), CGRectGetMidY(_barGlass.frame));
+    [self snapFromCenter:center inBounds:bounds];
+    [self collapseAnimated];
+}
+
+#pragma mark 回库
 
 - (void)returnToLibrary {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    [defaults removeObjectForKey:@"selected"];
-    [defaults removeObjectForKey:@"selectedContainer"];
-    [defaults synchronize];
-    NSLog(@"[LCBootstrap][dock-r1] 点击返回游戏库，自拉起宿主 UI");
-    [LCSharedUtils launchToGuestAppWithClassicMode:0];
+    if (_returning) return;
+    _returning = YES;
+    [self invalidateCollapseTimer];
+    // returning 标记与吸附状态同文件：库侧冷启动读到后首帧盖黑、淡出时清除
+    NSMutableDictionary *state = LCQBLoadState();
+    state[@"edge"] = @(_edge);
+    state[@"ratio"] = @(_ratio);
+    state[@"returning"] = @YES;
+    LCQBSaveState(state);
+    [self showReturnVeil];
 }
+
+// 全屏黑遮罩：0.25s 淡入至全黑（中央白房子图标 + 「游戏库」小字），
+// 全黑后再走回库原语，进程重启的接缝被盖在黑场里；库侧以同一标记接淡出。
+- (void)showReturnVeil {
+    CGRect bounds = _scene.coordinateSpace.bounds;
+    UIWindow *veil = [[UIWindow alloc] initWithWindowScene:_scene];
+    veil.windowLevel = UIWindowLevelAlert + 200;
+    veil.frame = bounds;
+    veil.backgroundColor = UIColor.blackColor;
+    UIViewController *vc = [UIViewController new];
+    vc.view.backgroundColor = UIColor.blackColor;
+    UIImageView *house = [[UIImageView alloc] initWithImage:LCQBHouseImage(38, 0.9, 2.2)];
+    house.frame = CGRectMake((bounds.size.width - 38) / 2, (bounds.size.height - 38) / 2 - 14, 38, 38);
+    [vc.view addSubview:house];
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, CGRectGetMaxY(house.frame) + 8, bounds.size.width, 18)];
+    label.text = @"游戏库";
+    label.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    label.textColor = [UIColor colorWithWhite:1 alpha:0.75];
+    label.textAlignment = NSTextAlignmentCenter;
+    [vc.view addSubview:label];
+    veil.rootViewController = vc;
+    veil.alpha = 0;
+    veil.hidden = NO;
+    _veilWindow = veil;
+    [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
+        veil.alpha = 1;
+    } completion:^(BOOL finished) {
+        // 以下为 dock-test-3 已真机验证的回库原语，调用内容与顺序保持原样
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        [defaults removeObjectForKey:@"selected"];
+        [defaults removeObjectForKey:@"selectedContainer"];
+        [defaults synchronize];
+        NSLog(@"[LCBootstrap][quickbar] 点击返回游戏库，自拉起宿主 UI");
+        [LCSharedUtils launchToGuestAppWithClassicMode:0];
+    }];
+}
+
 @end
 
-static void LCDockReturnInstall(void) {
-    if (lcDockReturnInstallAttempted) return;
-    lcDockReturnInstallAttempted = YES;
-    // 实验包内的关闭开关（默认装）
-    if ([NSUserDefaults.standardUserDefaults boolForKey:@"LCDockReturnDisable"]) return;
-    LCDockReturnHandler *handler = [LCDockReturnHandler sharedHandler];
+static BOOL lcQuickBarInstallAttempted;
+
+static void LCQuickBarInstall(void) {
+    if (lcQuickBarInstallAttempted) return;
+    lcQuickBarInstallAttempted = YES;
+    // 关闭开关（默认装）
+    if ([NSUserDefaults.standardUserDefaults boolForKey:@"LCQuickBarDisable"]) return;
+    LCQuickBarHandler *handler = [LCQuickBarHandler sharedHandler];
     [NSNotificationCenter.defaultCenter addObserver:handler
                                            selector:@selector(sceneDidActivate:)
                                                name:UISceneDidActivateNotification
@@ -755,10 +1442,10 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         return appError;
     }
 
-    // [exp/dock-r1 实验] standalone 进程内直跑：跳客体 main 前预置「返回游戏库」浮动钮。
-    // 多任务 LiveProcess 路径不装（本实验主线是进程内直跑形态）。
+    // standalone 进程内直跑：跳客体 main 前预置快捷栏（回游戏库）。
+    // 多任务 LiveProcess 路径不装（快捷栏是进程内直跑形态的一部分）。
     if (!isLiveProcess) {
-        LCDockReturnInstall();
+        LCQuickBarInstall();
     }
 
     // Go!
