@@ -248,6 +248,122 @@ static void *getAppEntryPoint(void *handle) {
     return (void *)header + entryoff;
 }
 
+#pragma mark - [exp/dock-r1 实验] 进程内直跑「返回游戏库」浮动钮
+// 目标形态与正式包一致：游戏在本进程内全屏直跑（standalone 路径），只在客体场景之上
+// 多一个高层级小窗按钮。同进程内恢复宿主 UI 不可行——invokeAppMain 跳入客体 main 后
+// 不返回，客体 main 一旦返回会被 LiveContainerMain 当错误串处理并终止进程，宿主 UI
+// 从未在本进程加载。因此点击动作走 LC 自带的自拉起机制：清掉 selected 后调用
+// launchToGuestAppWithClassicMode:，它用 lcMainBundle（覆写前捕获的原 LC 包）向
+// LSApplicationWorkspace 请求打开 LC 自身、随后 SIGKILL 本进程；新启的 LC 进程因
+// selected 已清而直接进入游戏库。客体进程随之终止（串行单开，符合既定规格）。
+@interface LCDockReturnHandler : NSObject
++ (instancetype)sharedHandler;
+- (void)attachToActiveSceneIfNeeded;
+@end
+
+static UIWindow *lcDockReturnWindow;
+static BOOL lcDockReturnInstallAttempted;
+
+@implementation LCDockReturnHandler
++ (instancetype)sharedHandler {
+    static LCDockReturnHandler *handler;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ handler = [LCDockReturnHandler new]; });
+    return handler;
+}
+
+- (void)sceneDidActivate:(NSNotification *)note {
+    if ([note.object isKindOfClass:UIWindowScene.class]) {
+        [self attachToScene:(UIWindowScene *)note.object];
+    } else {
+        [self attachToActiveSceneIfNeeded];
+    }
+}
+
+- (void)attachToActiveSceneIfNeeded {
+    if (lcDockReturnWindow) return;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if ([scene isKindOfClass:UIWindowScene.class] &&
+            scene.activationState == UISceneActivationStateForegroundActive) {
+            [self attachToScene:(UIWindowScene *)scene];
+            return;
+        }
+    }
+}
+
+- (void)attachToScene:(UIWindowScene *)scene {
+    if (lcDockReturnWindow || !scene) return;
+    CGFloat W = 100, H = 46;
+    CGRect bounds = scene.coordinateSpace.bounds;
+    UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene];
+    window.windowLevel = UIWindowLevelAlert + 100;
+    window.frame = CGRectMake(CGRectGetWidth(bounds) - W - 10,
+                              CGRectGetMidY(bounds) - H / 2, W, H);
+    window.backgroundColor = UIColor.clearColor;
+
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    button.frame = CGRectMake(0, 0, W, H);
+    button.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
+    button.layer.cornerRadius = 12;
+    button.clipsToBounds = YES;
+    button.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    [button setTitle:@"游戏库" forState:UIControlStateNormal];
+    [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    [button addTarget:self action:@selector(returnToLibrary) forControlEvents:UIControlEventTouchUpInside];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+    [button addGestureRecognizer:pan];
+
+    UIViewController *rootVC = [UIViewController new];
+    rootVC.view = button;
+    window.rootViewController = rootVC;
+    window.hidden = NO;
+    lcDockReturnWindow = window;
+    NSLog(@"[LCBootstrap][dock-r1] 返回游戏库浮动钮已挂载");
+}
+
+- (void)handlePan:(UIPanGestureRecognizer *)pan {
+    UIWindow *window = lcDockReturnWindow;
+    if (!window) return;
+    CGPoint translation = [pan translationInView:window];
+    CGPoint center = window.center;
+    center.x += translation.x;
+    center.y += translation.y;
+    CGRect bounds = window.windowScene.coordinateSpace.bounds;
+    center.x = MAX(40, MIN(center.x, CGRectGetWidth(bounds) - 40));
+    center.y = MAX(40, MIN(center.y, CGRectGetHeight(bounds) - 40));
+    window.center = center;
+    [pan setTranslation:CGPointZero inView:window];
+}
+
+- (void)returnToLibrary {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [defaults removeObjectForKey:@"selected"];
+    [defaults removeObjectForKey:@"selectedContainer"];
+    [defaults synchronize];
+    NSLog(@"[LCBootstrap][dock-r1] 点击返回游戏库，自拉起宿主 UI");
+    [LCSharedUtils launchToGuestAppWithClassicMode:0];
+}
+@end
+
+static void LCDockReturnInstall(void) {
+    if (lcDockReturnInstallAttempted) return;
+    lcDockReturnInstallAttempted = YES;
+    // 实验包内的关闭开关（默认装）
+    if ([NSUserDefaults.standardUserDefaults boolForKey:@"LCDockReturnDisable"]) return;
+    LCDockReturnHandler *handler = [LCDockReturnHandler sharedHandler];
+    [NSNotificationCenter.defaultCenter addObserver:handler
+                                           selector:@selector(sceneDidActivate:)
+                                               name:UISceneDidActivateNotification
+                                             object:nil];
+    // 兜底重试：场景可能在通知注册前已激活，或客体建场较晚
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [handler attachToActiveSceneIfNeeded];
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [handler attachToActiveSceneIfNeeded];
+    });
+}
+
 static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContainer, int argc, char *argv[]) {
     NSString *appError = nil;
     if([[lcUserDefaults objectForKey:@"LCWaitForDebugger"] boolValue]) {
@@ -637,6 +753,12 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         NSLog(@"[LCBootstrap] %@", appError);
         *path = oldPath;
         return appError;
+    }
+
+    // [exp/dock-r1 实验] standalone 进程内直跑：跳客体 main 前预置「返回游戏库」浮动钮。
+    // 多任务 LiveProcess 路径不装（本实验主线是进程内直跑形态）。
+    if (!isLiveProcess) {
+        LCDockReturnInstall();
     }
 
     // Go!
