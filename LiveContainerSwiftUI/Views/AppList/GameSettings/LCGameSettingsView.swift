@@ -436,18 +436,32 @@ struct LCGameSettingsView: View {
 
     // MARK: 封面头（NX PaneBanner 移植）
 
-    /// 头部高度规则（NX 原式）：有横图 bannerHeight = min(宽×9/16, 220)；
-    /// 信息簇以 padding.top = bannerHeight − 22 压在图下缘；无横图时
-    /// bannerHeight = 64、簇顶 padding 即 64。LC 两形态顶部 inset 恒 0
-    /// （sheet 顶格 / 面板内根层已忽略横向 inset），NX 的 +topInset 项
-    /// 恒为 0，状态栏 scrim 同因略过（报告注明）。封面走既有解析链
-    /// （自定义 → 客体横版图 → 内置原画 → 联网获取 → 图标）；来源为图标时按 NX
-    /// 无横图路：图标自体模糊底 + 96×96 缩略图。
+    /// 头部高度与 topInset（Phase 26 按 NX 原式找回）：NX 的头部顶
+    /// 在物理顶（ScrollView 忽略安全区），bannerHeight = 有横图
+    /// min(宽×9/16, 220) + topInset、无横图 topInset + 64，信息簇以
+    /// padding.top = bannerHeight − 22 压在图下缘——topInset 项的作
+    /// 用是让整幅图与簇一起下移，簇相对安全区的位置不变。
+    /// LC 的坐标系不同：头部布局顶在安全线（外包 NavigationView
+    /// 把设备顶部安全区还给内容），簇的布局公式（padding.top =
+    /// min(宽×9/16, 220) − 22 / 无横图 64）与既有逐点一致、簇与
+    /// 「‹ 游戏库」钮相对安全区的位置都不动；NX 的 +topInset 在此
+    /// 坐标系里等价于「只把背景层向上出血 topInset」——背景帧扩到
+    /// 物理顶后，底图的总高（帧高 + 160 溢出）与 NX 逐点相同（图
+    /// 顶同为物理顶、图高同为 bannerHeight − 22 + 簇高 + 160）。
+    /// 切勿把 topInset 加进布局公式：那会让簇在安全线之下再下移
+    /// 一整段（双算）。
+    /// topInset 取窗口顶部安全区真值（LCSidePanelSpec
+    /// .windowTopSafeInset），逐次求值现读：竖屏为设备值（59）、
+    /// 手机横屏状态栏隐藏时为 0，旋转后即为新方向的值，两形态
+    /// 同式、不残留。封面走既有解析链（自定义 → 客体横版图 →
+    /// 内置原画 → 联网获取 → 图标）；来源为图标时按 NX 无横图
+    /// 路：图标自体模糊底 + 96×96 缩略图。
     private var coverHeader: some View {
         let resolution = coverResolution
         let hasBanner = resolution.source != .icon
         let width = headerWidth > 0 ? headerWidth : 430
         let bannerHeight = hasBanner ? min(width * 9 / 16, 220) : 64.0
+        let topInset = LCSidePanelSpec.windowTopSafeInset
         return ZStack(alignment: .bottomLeading) {
             headerCluster(hasBanner: hasBanner, image: resolution.image, wide: width >= 560)
                 .padding(.horizontal, 24)
@@ -455,7 +469,10 @@ struct LCGameSettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
         .background {
-            headerBackdrop(image: resolution.image, hasBanner: hasBanner)
+            // 背景层向上出血到物理顶（布局帧不动）：底图的图顶与
+            // scrim 随之落在状态栏之下，封面铺满到屏幕顶缘
+            headerBackdrop(image: resolution.image, hasBanner: hasBanner, topInset: topInset)
+                .ignoresSafeArea(edges: .top)
         }
         .background {
             GeometryReader { geo in
@@ -554,8 +571,13 @@ struct LCGameSettingsView: View {
     /// 压暗渐变（clear@0.3 → 黑 0.4@0.6 → 黑 0.55@1）；无横图：
     /// 图标自体放大 1.4 + blur 40 + saturation 1.2 + 黑 0.38 叠加。
     /// mask stops：黑@0 / 黑@0.45 / 黑 0.55@0.68 / 黑 0.18@0.85 / clear@1。
+    /// 状态栏 scrim（Phase 26 补回，NX 原规格）：叠在图层之上、mask
+    /// 之内，topInset > 0 时黑 0.5 → clear、高 topInset + 50，锚在
+    /// 图顶（背景帧已出血到物理顶）——亮封面下状态栏的时钟与电量
+    /// 靠它保可读；NX 结构里此 overlay 盖在图层组全体之上，有 /
+    /// 无横图都生效。
     @ViewBuilder
-    private func headerBackdrop(image: UIImage?, hasBanner: Bool) -> some View {
+    private func headerBackdrop(image: UIImage?, hasBanner: Bool, topInset: CGFloat) -> some View {
         GeometryReader { geo in
             Group {
                 if hasBanner, let image {
@@ -585,6 +607,12 @@ struct LCGameSettingsView: View {
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height + 160, alignment: .top)
+            .overlay(alignment: .top) {
+                if topInset > 0 {
+                    LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: topInset + 50)
+                }
+            }
         }
         .mask {
             LinearGradient(stops: [
