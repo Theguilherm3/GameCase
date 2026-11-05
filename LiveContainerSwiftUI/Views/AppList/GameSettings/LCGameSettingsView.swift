@@ -295,6 +295,7 @@ struct LCGameSettingsView: View {
     @State private var filePickerPresented = false
     @State private var cropItem: LCCoverCropItem?
     @State private var coverErrorPresented = false
+    @State private var padEditorRequest: LCPadEditorRequest?
 
     private static let pageBackground = Color(red: 0.055, green: 0.055, blue: 0.059)
 
@@ -429,6 +430,24 @@ struct LCGameSettingsView: View {
             Button("lc.common.cancel".loc, role: .cancel) {}
         } message: {
             Text("清掉这个游戏在库里保存的全部启动器选择，回到打包时的默认值。按键布局不受影响。")
+        }
+        // 按键布局编辑器整屏呈现（Phase 20，照 NX 壳的排法：编辑器是
+        // 库根层的整屏覆盖层，"The whole screen, so the preview is as
+        // large as the device allows"）：不再像原先那样用 NavigationLink
+        // push 进宿主导航栈——竖屏 sheet 里编辑器画布以竖屏 bounds 为
+        // 坐标空间（比例与游戏横屏不符），横屏侧面板里更是被塞进约
+        // 44% 宽的面板内推进，画布与控制卡双双被裁。fullScreenCover
+        // 从 sheet / 面板内发出都盖满整屏，
+        // 关闭后本页原样（sheet 仍是 sheet、面板仍是面板、滚动位置与
+        // 已改设置都在）。本页的封面裁剪页已是同款 fullScreenCover。
+        .fullScreenCover(item: $padEditorRequest) { request in
+            LCPadLayoutEditorView(
+                game: request.game,
+                prefs: request.prefs,
+                bundlePath: app.appInfo.bundlePath(),
+                bannerImage: LCGameLibraryInfo.bannerImage(for: app.appInfo),
+                skinValue: request.skinValue
+            )
         }
     }
 
@@ -934,12 +953,13 @@ struct LCGameSettingsView: View {
     }
 
     private func padLayoutRow(prefs: LCGamePrefs, knownGame: LCKnownGame) -> some View {
-        NavigationLink {
-            LCPadLayoutEditorView(
+        // 点行只打包入参、置位呈现请求（整屏呈现挂在 body 根层，见
+        // body 尾注）；不再用 NavigationLink push——编辑器必须整屏，
+        // 不能进 sheet / 侧面板的导航栈（Phase 20）
+        Button {
+            padEditorRequest = LCPadEditorRequest(
                 game: knownGame.padLayoutGame,
                 prefs: prefs,
-                bundlePath: app.appInfo.bundlePath(),
-                bannerImage: LCGameLibraryInfo.bannerImage(for: app.appInfo),
                 skinValue: skinInt(for: knownGame)
             )
         } label: {
@@ -949,6 +969,7 @@ struct LCGameSettingsView: View {
                     .foregroundColor(LCNXColor.cream)
             }
         }
+        .buttonStyle(.plain)
     }
 
     private func skinInt(for knownGame: LCKnownGame) -> Int {
@@ -1086,4 +1107,14 @@ struct LCGameSettingsView: View {
         }
         currentValues = values
     }
+}
+
+/// 按键布局编辑器的整屏呈现请求（Phase 20）：padLayoutRow 点按时把
+/// 编辑器入参打包成一份，body 根层据此 fullScreenCover 整屏呈现；
+/// 关闭后请求清空，设置页保持原形态。
+private struct LCPadEditorRequest: Identifiable {
+    let id = UUID()
+    let game: LCPadLayoutGame
+    let prefs: LCGamePrefs
+    let skinValue: Int
 }
