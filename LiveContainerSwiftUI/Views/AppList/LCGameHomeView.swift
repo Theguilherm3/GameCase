@@ -42,7 +42,7 @@ struct LCGameCoverView: View {
     let refreshToken: Int
 
     var body: some View {
-        _ = refreshToken
+        let _ = refreshToken
         if let bannerImage = LCGameLibraryInfo.bannerImage(for: app.appInfo) {
             Image(uiImage: bannerImage)
                 .resizable()
