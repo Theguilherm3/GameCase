@@ -40,6 +40,11 @@ struct LCGameCoverView: View {
     /// 现读磁盘算出来的，本视图不观察任何状态，令牌不变 body 就不重跑、
     /// 换完封面仍显示旧图。令牌作为入参变化即触发重解析。
     let refreshToken: Int
+    /// 无横图兜底美化（Phase 19）：仅主页大卡（竖屏 hero）与横屏牌组卡
+    /// 打开——解析落到图标时不再把图标拉伸充数，改 NX 无横图同款语言
+    /// （与设置页头部 Phase 17 的无横图路同源）。小缩略图（最近游玩 /
+    /// 网格卡 / 横屏背景晕染）保持旧兜底，不传此旗。
+    var beautifiedFallback: Bool = false
 
     var body: some View {
         let _ = refreshToken
@@ -48,20 +53,57 @@ struct LCGameCoverView: View {
                 .resizable()
                 .scaledToFill()
         } else if let iconImage = app.appInfo.iconIsDarkIcon(darkModeIcon) {
-            ZStack {
-                Image(uiImage: iconImage)
-                    .resizable()
-                    .scaledToFill()
-                    .blur(radius: 24)
-                    .opacity(0.75)
-                Image(uiImage: iconImage)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(18)
+            if beautifiedFallback {
+                beautifiedIconFallback(iconImage: iconImage)
+            } else {
+                ZStack {
+                    Image(uiImage: iconImage)
+                        .resizable()
+                        .scaledToFill()
+                        .blur(radius: 24)
+                        .opacity(0.75)
+                    Image(uiImage: iconImage)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(18)
+                }
             }
         } else {
             Rectangle()
                 .fill(Color.white.opacity(0.06))
+        }
+    }
+
+    /// 美化兜底：图标自体放大 1.4 + blur 40 + saturation 1.2 铺满卡面、
+    /// 黑 0.38 叠压（NX PaneBanner 无横图底原值），中央叠一张清晰图标，
+    /// 边长 = 卡高 55%，圆角 / 描边 / 阴影按 NX CoverThumbnail 规格
+    /// （圆角比 0.2、白 0.14 描边、阴影 black 0.4 / r16 / y6）。
+    private func beautifiedIconFallback(iconImage: UIImage) -> some View {
+        GeometryReader { geo in
+            let side = geo.size.height * 0.55
+            ZStack {
+                Image(uiImage: iconImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .scaleEffect(1.4)
+                    .blur(radius: 40)
+                    .saturation(1.2)
+                    .clipped()
+                Color.black.opacity(0.38)
+                Image(uiImage: iconImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: side, height: side)
+                    .clipShape(RoundedRectangle(cornerRadius: side * 0.2, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: side * 0.2, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(0.4), radius: 16, x: 0, y: 6)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
     }
 }
@@ -303,12 +345,24 @@ struct LCGameHomeView: View {
             // 按心跳补结后再读快照（回库路径已由客体侧结清，这里是空转）。
             LCPlayStats.reconcileOpenSession()
             playStats = LCPlayStats.allEntries()
+            sweepCoverFetches()
         }
         .onChange(of: refreshToken) { _ in
             playStats = LCPlayStats.allEntries()
+            sweepCoverFetches()
         }
         .onChange(of: apps.map { key(of: $0) }) { _ in
             ensureFocus()
+        }
+    }
+
+    /// 联网封面懒抓（Phase 19）：主页出现 / 库刷新时逐个过一遍去重入口——
+    /// 已有更高优先封面、已有抓取缓存、负缓存新鲜的游戏都在入口内直接
+    /// 返回，不发请求；抓取成功后服务回调 bump libraryRefresh，封面随
+    /// 令牌变化重解析（本 onChange 会再扫一遍，但那时缓存已落盘、空转）。
+    private func sweepCoverFetches() {
+        for app in apps {
+            LCCoverFetchService.shared.ensureFetched(appInfo: app.appInfo)
         }
     }
 
@@ -587,7 +641,7 @@ struct LCGameHomeView: View {
     private func portraitHero(width: CGFloat, height: CGFloat, safeTop: CGFloat, margin m: CGFloat) -> some View {
         ZStack {
             if let app = focusedApp {
-                LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
+                LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
                     .frame(width: width, height: height)
                     .clipped()
             }
@@ -1022,7 +1076,7 @@ struct LCGameHomeView: View {
     private func landscapeCard(app: LCAppModel, cardW: CGFloat, isFocused: Bool, transformScale: CGFloat = 1) -> some View {
         let ready = datapackReady(app)
         let dot = max(8, min(14, (cardW / transformScale) * 0.034)) * transformScale
-        return LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
+        return LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
             .frame(width: cardW, height: cardW * 9 / 16)
             .clipShape(RoundedRectangle(cornerRadius: cardW * 0.03, style: .continuous))
             .overlay {
