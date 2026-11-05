@@ -596,6 +596,11 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         
     }
     func onAppear() {
+        // 联网封面抓取成功 → bump 既有库刷新令牌，主页随下一次 body 按磁盘
+        // 重算封面（Phase 19；服务侧不另设通知，回调只汇到这条既有通道）
+        LCCoverFetchService.shared.onCoverUpdated = {
+            self.libraryRefresh += 1
+        }
         for app in sharedModel.apps {
             app.delegate = self
         }
@@ -886,10 +891,13 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 }
             }
 
+            // 导入完成预抓封面（Phase 19）：解析链落到图标且能解析出标题 ID
+            // 时后台抓一次官方主视觉，结果走服务回调 bump libraryRefresh
+            LCCoverFetchService.shared.prefetch(appInfo: finalNewApp)
             self.installprogressVisible = false
         }
     }
-    
+
     func startInstallFromUrl() async {
         guard let installUrlStr = await installUrlInput.open(), installUrlStr.count > 0 else {
             return
@@ -1546,6 +1554,7 @@ enum LCGameLibraryInfo {
         case custom   // 玩家自定义（宿主 Documents/CustomCovers）
         case guest    // 客体 IPA 自带横版图
         case bundled  // 宿主内置原画
+        case fetched  // 联网获取（宿主 Documents/FetchedCovers，按标题 ID 抓的官方主视觉）
         case icon     // 无横版图，卡片退回应用图标兜底
 
         var displayName: String {
@@ -1553,6 +1562,7 @@ enum LCGameLibraryInfo {
             case .custom: return "自定义"
             case .guest: return "游戏自带"
             case .bundled: return "内置原画"
+            case .fetched: return "联网获取"
             case .icon: return "应用图标"
             }
         }
@@ -1566,8 +1576,17 @@ enum LCGameLibraryInfo {
         return LCCustomCoverStore.load(forBundleIdentifier: bundleId)
     }
 
+    /// 联网抓取缓存：宿主 Documents/FetchedCovers/<bundleId>.jpg（抓取链见 LCFetchedCover）
+    static func fetchedCoverImage(for appInfo: LCAppInfo) -> UIImage? {
+        guard let bundleId = appInfo.bundleIdentifier() else {
+            return nil
+        }
+        return LCFetchedCoverStore.load(forBundleIdentifier: bundleId)
+    }
+
     /// 封面解析（单一入口，主页 hero / 网格卡 / 横屏轮播 / 最近游玩 / 设置页共用）：
-    /// 自定义封面 → 客体 IPA 自带横版封面 → 宿主内置原画 → nil（卡片再退回图标兜底）。
+    /// 自定义封面 → 客体 IPA 自带横版封面 → 宿主内置原画 → 联网抓取缓存
+    /// → nil（卡片再退回图标兜底）。
     /// 本链不做图片缓存：每次求值都从磁盘现读现解码，换自定义封面后各处随下一次
     /// 界面刷新（关设置页、状态变更）即为新图，无需额外失效处理。
     static func bannerResolution(for appInfo: LCAppInfo) -> (image: UIImage?, source: BannerSource) {
@@ -1579,6 +1598,9 @@ enum LCGameLibraryInfo {
         }
         if let bundled = bundledCoverImage(for: appInfo) {
             return (bundled, .bundled)
+        }
+        if let fetched = fetchedCoverImage(for: appInfo) {
+            return (fetched, .fetched)
         }
         return (nil, .icon)
     }

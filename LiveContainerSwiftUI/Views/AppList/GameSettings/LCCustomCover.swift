@@ -6,7 +6,7 @@
 //  图存宿主侧 Documents/CustomCovers/<客体 bundleId>.jpg，不进客体容器，
 //  按 bundleId 键存——重装同游戏（新容器）封面还在；删文件即恢复默认。
 //  解析优先级最高（见 LCGameLibraryInfo.bannerResolution）：自定义封面 →
-//  客体自带横版图 → 内置原画 → 图标兜底。
+//  客体自带横版图 → 内置原画 → 联网抓取缓存 → 图标兜底。
 //
 
 import SwiftUI

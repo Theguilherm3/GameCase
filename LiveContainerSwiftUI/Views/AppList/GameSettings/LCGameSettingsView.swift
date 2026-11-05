@@ -340,7 +340,7 @@ struct LCGameSettingsView: View {
                             .confirmationDialog("封面图", isPresented: $coverMenuPresented, titleVisibility: .visible) {
                                 Button("从相册选择") { photoPickerPresented = true }
                                 Button("从文件选择") { filePickerPresented = true }
-                                if coverHasCustom {
+                                if coverHasCustom || coverHasFetched {
                                     Button("恢复默认", role: .destructive) { removeCustomCover() }
                                 }
                                 Button("lc.common.cancel".loc, role: .cancel) {}
@@ -406,6 +406,11 @@ struct LCGameSettingsView: View {
             coverRefresh += 1
             statusRefresh += 1
             loadState()
+            // 联网封面懒抓（Phase 19）：展示时无缓存、无负缓存则补抓一次，
+            // 成功回调 bump 本页 coverRefresh，封面头与封面行即时换上新图
+            LCCoverFetchService.shared.ensureFetched(appInfo: app.appInfo) {
+                self.coverRefresh += 1
+            }
         }
         // onDismiss 覆盖导入页的全部退出路径：原先刷新只挂在导入视图的
         // onFinished 上，而它仅由「完成」钮触发——用工具栏「取消」或下滑关页
@@ -434,7 +439,7 @@ struct LCGameSettingsView: View {
     /// bannerHeight = 64、簇顶 padding 即 64。LC 两形态顶部 inset 恒 0
     /// （sheet 顶格 / 面板内根层已忽略横向 inset），NX 的 +topInset 项
     /// 恒为 0，状态栏 scrim 同因略过（报告注明）。封面走既有解析链
-    /// （自定义 → 客体横版图 → 内置原画 → 图标）；来源为图标时按 NX
+    /// （自定义 → 客体横版图 → 内置原画 → 联网获取 → 图标）；来源为图标时按 NX
     /// 无横图路：图标自体模糊底 + 96×96 缩略图。
     private var coverHeader: some View {
         let resolution = coverResolution
@@ -699,6 +704,10 @@ struct LCGameSettingsView: View {
         LCCustomCoverStore.exists(forBundleIdentifier: app.bundleIdentifier)
     }
 
+    private var coverHasFetched: Bool {
+        LCFetchedCoverStore.exists(forBundleIdentifier: app.bundleIdentifier)
+    }
+
     @ViewBuilder
     private var coverRowThumbnail: some View {
         Group {
@@ -748,6 +757,10 @@ struct LCGameSettingsView: View {
 
     private func removeCustomCover() {
         LCCustomCoverStore.remove(forBundleIdentifier: app.bundleIdentifier)
+        // 恢复默认连联网抓取缓存一并删，并清掉负缓存记录——删完之后
+        // 主页 / 设置页再次展示时允许重新抓（Phase 19）
+        LCFetchedCoverStore.remove(forBundleIdentifier: app.bundleIdentifier)
+        LCCoverFetchService.shared.clearNegativeCache(forBundleIdentifier: app.bundleIdentifier)
         coverRefresh += 1
     }
 
