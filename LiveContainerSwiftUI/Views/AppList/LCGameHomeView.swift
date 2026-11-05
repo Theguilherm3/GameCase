@@ -1317,21 +1317,25 @@ struct LCGameHomeView: View {
                     count: list.count,
                     start: carouselGestureStart
                 )
-                let epoch = carouselScrollEpoch
                 withAnimation(deckAnimation) {
                     carouselOffset = CGFloat(card) * stride
                 }
-                // 吸附动画走完才落聚焦（与 NX 「停稳才选中」同义），
-                // 此前名牌 / 计数 / 背景都停在旧聚焦上
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
-                    guard carouselScrollEpoch == epoch else {
-                        return
-                    }
-                    carouselSettled = true
-                    if list.indices.contains(card) {
-                        setFocusFromDeck(list[card])
-                    }
+                // Phase 23：落点一决定（手势结束 / 吸附开始这一帧）就
+                // 提交聚焦——背景 0.45 淡化与名牌 0.2 淡化由此与吸附
+                // 动画同时起跑。旧实现把提交压在吸附之后：asyncAfter
+                // (+0.32) 才落聚焦，三层串行，卡停稳后名牌还要再等
+                // 0.32 才开始换、背景 0.32+0.45 才换完（录屏实测背景 /
+                // 标题慢约半秒跟上）。NX 的选择虽生于滚动 idle，但其
+                // 滚动自带减速段、提交与停稳同帧，淡化在停稳帧起跑；
+                // 本手势移植以「落点提交」为闸达成同一观感时序。拖拽
+                // 进行中（onChanged）不提交——未决定落点的滑动不换
+                // 背景 / 名牌，防闪烁原意不变。settled 不在此翻：仍由
+                // finishCarouselScroll 在 +0.32 翻（与点邻卡 / 外部同步
+                // 同一机制），Phase 16 的点击裁决口径不动。
+                if list.indices.contains(card) {
+                    setFocusFromDeck(list[card])
                 }
+                finishCarouselScroll(epoch: carouselScrollEpoch)
             }
     }
 
