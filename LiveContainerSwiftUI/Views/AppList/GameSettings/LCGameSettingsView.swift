@@ -21,8 +21,11 @@ private struct LCCoverCropItem: Identifiable {
 struct LCGameSettingsView: View {
     @ObservedObject var app: LCAppModel
     var onOpenDataFolder: () -> Void
-    /// 本页以 sheet 呈现（列表层包 NavigationView 供页内子页推进）：
-    /// 左上角「取消」直接用 dismiss 环境关闭，语义与呈现方式严格匹配。
+    /// 横屏侧面板呈现时的关闭回调（Phase 14，列表层注入）：面板不是
+    /// 系统呈现，dismiss 环境无效，关闭走此回调；nil = sheet 呈现，
+    /// 左上角「取消」用 dismiss 环境关闭（列表层包 NavigationView 供
+    /// 页内子页推进），与原来一致。
+    var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
@@ -141,7 +144,11 @@ struct LCGameSettingsView: View {
             // 启动走主页的开始钮。
             ToolbarItem(placement: .cancellationAction) {
                 Button("lc.common.cancel".loc) {
-                    dismiss()
+                    if let onClose {
+                        onClose()
+                    } else {
+                        dismiss()
+                    }
                 }
             }
         }

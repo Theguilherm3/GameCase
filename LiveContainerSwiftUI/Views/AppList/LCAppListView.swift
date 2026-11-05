@@ -93,6 +93,13 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     /// 不会重跑，大图、卡片、状态点就停在旧结果上（真机实测：要重进才变）。
     @State private var libraryRefresh = 0
     @State var gameSettingsItem: LCGameSettingsSheetItem? = nil
+    // 横屏侧面板呈现状态（Phase 14）：与上面的 sheet 状态并行——打开动作
+    // 按当时呈现层宽高二选一（横屏走面板、竖屏走 sheet），旋转中不换轨。
+    @State var gameSettingsPanelItem: LCGameSettingsSheetItem? = nil
+    @State var containerSettingsPanelPresented = false
+    /// 呈现层当前尺寸：由 body 里包主页的 GeometryReader 持续回写，
+    /// 打开动作据此判横竖屏（与 LCSettingsColumn 的页面宽 > 高同口径）
+    @State private var rootSize: CGSize = .zero
     @State var hiddenAppsPresented = false
     @State var legacySheetItem: LCLegacySheetItem? = nil
 
@@ -170,13 +177,35 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         )
     }
 
-    /// 打开每游戏设置页：sheet 弹层呈现（与容器设置、数据包导入页同款机制，
-    /// 真机已证明可呈现、可关闭、可交互）。全部入口（主页滑杆钮、网格卡长按、
-    /// 最近游玩行长按、隐藏页行）都汇到这一个函数、同一个 sheet 状态。
+    /// 打开每游戏设置页：竖屏走 sheet 弹层呈现（与容器设置、数据包导入页同款机制，
+    /// 真机已证明可呈现、可关闭、可交互）；横屏改走 NX 式右侧抽屉面板
+    /// （Phase 14，LCSidePanelContainer，主页留在后面被压暗）。全部入口
+    /// （主页滑杆钮、网格卡长按、最近游玩行长按、隐藏页行）都汇到这一个
+    /// 函数、按打开当时宽高二选一。
     /// 旧路径是隐藏 NavigationLink push：关闭靠跨视图写本层的 isActive @State，
     /// 连续两轮修复（dismiss 语义、关页时序）在真机都没让顶部按钮活过来，故整体换掉。
     func openGameSettings(app: LCAppModel) {
-        gameSettingsItem = LCGameSettingsSheetItem(app: app)
+        if rootSize.width > rootSize.height {
+            gameSettingsPanelItem = LCGameSettingsSheetItem(app: app)
+        } else {
+            gameSettingsItem = LCGameSettingsSheetItem(app: app)
+        }
+    }
+
+    /// 打开容器设置：与游戏设置同一条分轨规则（横屏面板 / 竖屏 sheet）
+    func presentContainerSettings() {
+        if rootSize.width > rootSize.height {
+            containerSettingsPanelPresented = true
+        } else {
+            containerSettingsPresented = true
+        }
+    }
+
+    /// 关闭游戏设置面板：与 sheet 的 onDismiss 等价——关页后 bump 刷新
+    /// 令牌，主页按磁盘现状重算封面与数据包状态
+    func closeGameSettingsPanel() {
+        gameSettingsPanelItem = nil
+        libraryRefresh += 1
     }
 
     /// 隐藏游戏恢复入口（主页 ＋ 菜单）：未解锁先鉴权，再以 sheet 打开隐藏游戏页
@@ -229,8 +258,10 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                         onImportIPA: { choosingIPA = true },
                         onImportDatapackGeneric: { datapackImportRequest = LCDatapackRequest(app: nil) },
                         onOpenHiddenApps: { openHiddenApps() },
-                        onOpenContainerSettings: { containerSettingsPresented = true }
+                        onOpenContainerSettings: { presentContainerSettings() }
                     )
+                    .onAppear { rootSize = proxy.size }
+                    .onChange(of: proxy.size) { rootSize = $0 }
                 }
 
                 // 回库淡入遮罩：与游戏内回库黑遮罩同款（黑底 + 房子图标 + 「游戏库」），
@@ -251,6 +282,26 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                     .opacity(returnFadeOpacity)
                     .allowsHitTesting(false)
                 }
+
+                // 横屏右侧抽屉面板（Phase 14，仅横屏打开时填充）：游戏设置
+                // 与容器设置。主页留在 ZStack 下层，被面板自带的压暗层盖住
+                // 且不可交互；面板内包 NavigationView，与 sheet 路径同构
+                // （工具栏落位、页内子页在面板宽内推进）。
+                LCSidePanelContainer(isPresented: gameSettingsPanelItem != nil, onClose: { closeGameSettingsPanel() }) {
+                    if let item = gameSettingsPanelItem {
+                        NavigationView {
+                            LCGameSettingsView(
+                                app: item.app,
+                                onOpenDataFolder: { openGameDataFolder(app: item.app) },
+                                onClose: { closeGameSettingsPanel() }
+                            )
+                        }
+                        .navigationViewStyle(StackNavigationViewStyle())
+                    }
+                }
+                LCSidePanelContainer(isPresented: containerSettingsPanelPresented, onClose: { containerSettingsPanelPresented = false }) {
+                    LCSettingsView(onClose: { containerSettingsPanelPresented = false })
+                }
             }
             .navigationBarHidden(true)
             .navigationBarProgressBar(show: $installprogressVisible, progress: $installProgressPercentage)
@@ -270,10 +321,11 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
             LCSettingsView()
         }
         .onChange(of: sharedModel.selectedTab) { tab in
-            // 底栏已摘除：证书等深链要求去设置页时，改以 sheet 呈现容器设置
+            // 底栏已摘除：证书等深链要求去设置页时，呈现容器设置
+            // （竖屏 sheet / 横屏侧面板，与齿轮入口同一条分轨规则）
             if tab == .settings {
                 sharedModel.selectedTab = .apps
-                containerSettingsPresented = true
+                presentContainerSettings()
             }
         }
         // onDismiss 覆盖全部退出路径（完成 / 取消 / 下滑）：导入成败、取消都要
@@ -1296,6 +1348,8 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     /// （如在高级设置里隐藏当前游戏 → 设置 sheet 随之关闭，语义与旧 push 版一致）。
     func closeNavigationView() {
         gameSettingsItem = nil
+        gameSettingsPanelItem = nil
+        containerSettingsPanelPresented = false
         hiddenAppsPresented = false
         legacySheetItem = nil
     }

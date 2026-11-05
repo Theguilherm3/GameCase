@@ -14,6 +14,10 @@ import GameController
 
 struct LCControllersView: View {
     @ObservedObject var monitor: LCControllerMonitor
+    /// 横屏侧面板呈现时的关闭回调（Phase 14，主页注入）：面板不是系统
+    /// 呈现，dismiss 环境无效，关闭走此回调；nil = sheet 呈现，用
+    /// dismiss 关闭，与原来一致。
+    var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var showTest = false
     /// 电量变化慢且 GameController 不发通知：30 秒重读一次（与 NX 壳适配器同策略）
@@ -94,7 +98,11 @@ struct LCControllersView: View {
                         .minimumScaleFactor(0.7)
                     Spacer(minLength: 8)
                     Button {
-                        dismiss()
+                        if let onClose {
+                            onClose()
+                        } else {
+                            dismiss()
+                        }
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 15, weight: .semibold))
