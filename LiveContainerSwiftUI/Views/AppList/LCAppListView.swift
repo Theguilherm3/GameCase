@@ -87,6 +87,11 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     
     // 每游戏设置页 / 隐藏游戏页的 sheet 呈现状态（Phase 5 起弃用隐藏
     // NavigationLink push：链接式关闭在真机连续两轮失效，见 openGameSettings）
+    /// 库内容刷新令牌：设置页 / 数据包导入页关闭后 bump，强制主页按磁盘现状
+    /// 重算封面与数据包状态。主页是纯 let 入参的值视图，自身不观察任何磁盘
+    /// 派生状态——弹层里改了封面文件 / romfs.img 后若没人通知它，它的 body
+    /// 不会重跑，大图、卡片、状态点就停在旧结果上（真机实测：要重进才变）。
+    @State private var libraryRefresh = 0
     @State var gameSettingsItem: LCGameSettingsSheetItem? = nil
     @State var hiddenAppsPresented = false
     @State var legacySheetItem: LCLegacySheetItem? = nil
@@ -214,6 +219,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                         installProgressVisible: installprogressVisible,
                         installProgress: installProgressPercentage,
                         safeAreaInsets: proxy.safeAreaInsets,
+                        refreshToken: libraryRefresh,
                         onRun: { runGame(app: $0) },
                         onSettings: { openGameSettings(app: $0) },
                         onOpenDataFolder: { openGameDataFolder(app: $0) },
@@ -269,10 +275,15 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 containerSettingsPresented = true
             }
         }
-        .sheet(item: $datapackImportRequest) { request in
+        // onDismiss 覆盖全部退出路径（完成 / 取消 / 下滑）：导入成败、取消都要
+        // 让主页按磁盘现状重算数据包状态——导入视图的 onFinished 只挂在「完成」
+        // 钮上、且本层此前根本没传，其余路径关页后主页一直停在旧状态。
+        .sheet(item: $datapackImportRequest, onDismiss: { libraryRefresh += 1 }) { request in
             LCDatapackImportView(request: request, apps: sharedModel.apps + sharedModel.hiddenApps)
         }
-        .sheet(item: $gameSettingsItem) { item in
+        // 设置页里可能换封面、导数据包、注册新容器：关页即 bump 令牌，
+        // 主页随之重解析封面与状态，不再等下一次无关的状态变更才刷新。
+        .sheet(item: $gameSettingsItem, onDismiss: { libraryRefresh += 1 }) { item in
             // 设置页工具栏只有左上角「取消」（dismiss），页内无回库/启动动作；
             // 这里包一层 NavigationView 供工具栏落位与页内子页（按键布局编辑器、高级设置）推进。
             NavigationView {

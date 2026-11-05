@@ -425,7 +425,11 @@ static UIImage *LCQBHouseImage(CGFloat side, CGFloat alpha, CGFloat lineWidth) {
 
 #pragma mark - 触摸视图（轻点/拖动判别，与游戏触摸共存）
 // 手工跟踪触摸：累计位移超过 8pt 才算拖动（此前不挪位置），轻点走 onTap。
-// 拖动用增量位移回调——视图随手指同移，增量天然不受视图自身移动污染。
+// 拖动用增量位移回调。坐标必须取固定坐标系（locationInView:nil = 窗口基准
+// 坐标，不随我们自己的浮层窗口移动）：旧实现取 locationInView:self，而触摸
+// 视图就装在被拖动的窗口/栏里——每挪一帧，下一事件的报点基准就被自己的
+// 移动污染一次，增量在真位移上叠加来回误差，肉眼即「跟手但抖」。改到固定
+// 系后增量只含手指的真实位移。
 
 @interface LCQBTouchView : UIView
 @property (nonatomic, copy, nullable) void (^onTap)(void);
@@ -441,14 +445,14 @@ static UIImage *LCQBHouseImage(CGFloat side, CGFloat alpha, CGFloat lineWidth) {
 }
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    _lastPoint = [touches.anyObject locationInView:self];
+    _lastPoint = [touches.anyObject locationInView:nil];
     _travel = 0;
     _dragging = NO;
     if (self.onTouchBegan) self.onTouchBegan();
 }
 
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    CGPoint p = [touches.anyObject locationInView:self];
+    CGPoint p = [touches.anyObject locationInView:nil];
     CGPoint delta = CGPointMake(p.x - _lastPoint.x, p.y - _lastPoint.y);
     _lastPoint = p;
     _travel += fabs(delta.x) + fabs(delta.y);
@@ -1011,6 +1015,11 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
 }
 
 - (void)collapseFromTimer {
+    if (_dragging) {
+        // 拖动中不收栏：改期到松手后再计 3 秒（拖动路径已不再逐帧重置此计时器）
+        [self resetCollapseTimer];
+        return;
+    }
     [self collapseAnimated];
 }
 
@@ -1021,23 +1030,38 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
 
 #pragma mark 拖动与吸附
 
+// 拖动跟手：每事件只做一次无动画的原点直写——不走 layoutForBounds 全量几何
+// （吸附判定 / 钳制 / 持久化只在松手时各做一次，见 finishDragFromTongue/Bar），
+// CATransaction 关掉隐式动画，避免图层把每帧位移再插值一遍造成拖尾与抖动。
 - (void)dragWindowBy:(CGPoint)delta {
     CGRect frame = _window.frame;
     frame.origin.x += delta.x;
     frame.origin.y += delta.y;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     _window.frame = frame;
+    [CATransaction commit];
 }
 
 - (void)dragBarBy:(CGPoint)delta {
     CGRect frame = _barGlass.frame;
     frame.origin.x += delta.x;
     frame.origin.y += delta.y;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     _barGlass.frame = frame;
-    [self resetCollapseTimer];
+    [CATransaction commit];
+    // 注：不再逐事件 resetCollapseTimer（每事件销毁/重建 NSTimer 是无谓的
+    // runloop churn）；拖动中的自动收起由 collapseFromTimer 的 _dragging
+    // 改期兜住，计时在 touchBegan 时已重置。
 }
 
 - (void)dragDidBegin {
     _dragging = YES;
+    // 掐断可能在飞的吸附归位动画：它在动画块里持续写窗口帧，用户快速回抓时
+    // 会与拖动直写抢帧。其 completion 为 nil，剥离无副作用。（展开/收起动画
+    // 动的是栏的 transform/alpha、completion 非 nil，不在此剥离。）
+    [_window.layer removeAllAnimations];
 }
 
 // 轻点（未成拖动）结束触摸时复位：自愈只在真拖动/动画期间让行
