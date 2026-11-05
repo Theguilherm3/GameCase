@@ -1292,7 +1292,7 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     // not found locally, let's look for the app in shared folder
     if(!guestAppInfo) {
         NSURL *appGroupPath = [NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:[LCSharedUtils appGroupID]];
-        appGroupFolder = [appGroupPath URLByAppendingPathComponent:@"LiveContainer"];
+        appGroupFolder = [appGroupPath URLByAppendingPathComponent:@"GameCase"];
         bundlePath = [NSString stringWithFormat:@"%@/Applications/%@", appGroupFolder.path, selectedApp];
         guestAppInfo = [NSDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/LCAppInfo.plist", bundlePath]];
         isSharedBundle = true;
@@ -1678,7 +1678,7 @@ int LiveContainerMain(int argc, char *argv[]) {
     lcSharedDefaults = [[NSUserDefaults alloc] initWithSuiteName: [LCSharedUtils appGroupID]];
     lcAppUrlScheme = NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"][0][@"CFBundleURLSchemes"][0];
     lcAppGroupPath = [[NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:[NSClassFromString(@"LCSharedUtils") appGroupID]] path];
-    isLiveProcess = [lcAppUrlScheme isEqualToString:@"liveprocess"];
+    isLiveProcess = [lcAppUrlScheme isEqualToString:@"gamecaseprocess"];
     setenv("LC_HOME_PATH", getenv("HOME"), 0);
 
     NSString *selectedApp = [lcUserDefaults stringForKey:@"selected"];
@@ -1721,7 +1721,7 @@ int LiveContainerMain(int argc, char *argv[]) {
         NSString* lastLaunchType = [lcUserDefaults objectForKey:@"lastLaunchType"];
         NSString* preferencesTo;
         if([lastLaunchType isEqualToString:@"Shared"]) {
-            preferencesTo = [LCSharedUtils.appGroupPath.path stringByAppendingPathComponent:[NSString stringWithFormat:@"LiveContainer/Data/Application/%@/Library/Preferences", lastLaunchDataUUID]];
+            preferencesTo = [LCSharedUtils.appGroupPath.path stringByAppendingPathComponent:[NSString stringWithFormat:@"GameCase/Data/Application/%@/Library/Preferences", lastLaunchDataUUID]];
         } else {
             NSString *docPath = [NSString stringWithFormat:@"%s/Documents", getenv("LC_HOME_PATH")];
             preferencesTo = [docPath stringByAppendingPathComponent:[NSString stringWithFormat:@"Data/Application/%@/Library/Preferences", lastLaunchDataUUID]];
@@ -1762,12 +1762,12 @@ int LiveContainerMain(int argc, char *argv[]) {
     }
     NSString* runningLC = [LCSharedUtils getContainerUsingLCSchemeWithFolderName:selectedContainer];
     // if another instance is running, we just switch to that one, these should be called after uiapplication initialized
-    // however if the running lc is liveprocess and current lc is livecontainer1 we just continue
+    // however if the running lc is gamecaseprocess and current lc is gamecase1 we just continue
     if(selectedApp && runningLC) {
         [lcUserDefaults removeObjectForKey:@"selected"];
         [lcUserDefaults removeObjectForKey:@"selectedContainer"];
         
-        if([runningLC hasSuffix:@"liveprocess"]) {
+        if([runningLC hasSuffix:@"gamecaseprocess"]) {
             runningLC = runningLC.stringByDeletingPathExtension;
         }
         
@@ -1778,9 +1778,9 @@ int LiveContainerMain(int argc, char *argv[]) {
             // Base64 encode the data
             NSString* urlStr;
             if(selectedContainer) {
-                urlStr = [NSString stringWithFormat:@"%@://livecontainer-launch?bundle-name=%@&container-folder-name=%@", runningLC, selectedAppBackUp, selectedContainer];
+                urlStr = [NSString stringWithFormat:@"%@://gamecase-launch?bundle-name=%@&container-folder-name=%@", runningLC, selectedAppBackUp, selectedContainer];
             } else {
-                urlStr = [NSString stringWithFormat:@"%@://livecontainer-launch?bundle-name=%@", runningLC, selectedAppBackUp];
+                urlStr = [NSString stringWithFormat:@"%@://gamecase-launch?bundle-name=%@", runningLC, selectedAppBackUp];
             }
             
             NSURL* url = [NSURL URLWithString:urlStr];
@@ -1867,7 +1867,7 @@ int LiveContainerMain(int argc, char *argv[]) {
         NSString *tweakFolder = nil;
         if (isSharedBundle) {
             NSURL *appGroupPath = [NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:[LCSharedUtils appGroupID]];
-            tweakFolder = [appGroupPath.path stringByAppendingPathComponent:@"LiveContainer/Tweaks"];
+            tweakFolder = [appGroupPath.path stringByAppendingPathComponent:@"GameCase/Tweaks"];
         } else {
             NSString *docPath = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].lastObject.path;
             tweakFolder = [docPath stringByAppendingPathComponent:@"Tweaks"];

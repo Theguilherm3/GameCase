@@ -171,7 +171,7 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
 
 + (BOOL)launchToGuestAppWithURL:(NSURL *)url {
     NSURLComponents* components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
-    if(![components.host isEqualToString:@"livecontainer-launch"]) return NO;
+    if(![components.host isEqualToString:@"gamecase-launch"]) return NO;
 
     NSString* launchBundleId = nil;
     NSString* openUrl = nil;
@@ -216,7 +216,7 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     static NSURL *infoPath;
     
     dispatch_once(&once, ^{
-        infoPath = [[LCSharedUtils appGroupPath] URLByAppendingPathComponent:@"LiveContainer/containerLock.plist"];
+        infoPath = [[LCSharedUtils appGroupPath] URLByAppendingPathComponent:@"GameCase/containerLock.plist"];
     });
     return infoPath;
 }
@@ -264,7 +264,7 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     return errno==ESRCH ? nil : appUsageInfo[@"runningLC"];
 }
 
-// lc can be something like livecontainer or livecontainer2.liveprocess, such that one LC can jump to another LC hosting the multitask app when user presses run while it's running
+// lc can be something like gamecase or gamecase2.gamecaseprocess, such that one LC can jump to another LC hosting the multitask app when user presses run while it's running
 + (void)setContainerUsingByLC:(NSString*)lc folderName:(NSString*)folderName auditToken:(uint64_t)val57 {
     NSURL* infoPath = [self containerLockPath];
     
@@ -301,7 +301,7 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
         .lastObject;
     NSURL *docPathUrl = [fm URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask]
         .lastObject;
-    NSURL *appGroupFolder = [[LCSharedUtils appGroupPath] URLByAppendingPathComponent:@"LiveContainer"];
+    NSURL *appGroupFolder = [[LCSharedUtils appGroupPath] URLByAppendingPathComponent:@"GameCase"];
     
     NSError *error;
     NSString *sharedAppDataFolderPath = [libraryPathUrl.path stringByAppendingPathComponent:@"SharedDocuments"];
@@ -313,7 +313,7 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     
     // something went wrong with app group
     if(!appGroupFolder && sharedDataFoldersToMove.count > 0) {
-        [lcUserDefaults setObject:@"LiveContainer was unable to move the data of shared app back because LiveContainer cannot access app group. Please check JITLess diagnose page in LiveContainer settings for more information." forKey:@"error"];
+        [lcUserDefaults setObject:@"GameCase was unable to move the data of shared app back because GameCase cannot access app group. Please check JITLess diagnose page in GameCase settings for more information." forKey:@"error"];
         return;
     }
     
@@ -350,7 +350,7 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
 
     // not found locally, let's look for the app in shared folder
     if (!appBundle) {
-        appGroupFolder = [[LCSharedUtils appGroupPath] URLByAppendingPathComponent:@"LiveContainer"];
+        appGroupFolder = [[LCSharedUtils appGroupPath] URLByAppendingPathComponent:@"GameCase"];
         
         bundlePath = [NSString stringWithFormat:@"%@/Applications/%@", appGroupFolder.path, bundleId];
         if([NSFileManager.defaultManager fileExistsAtPath:bundlePath]) {
@@ -391,7 +391,7 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
 
 + (NSString*)findDefaultContainerWithBundleId:(NSString*)bundleId {
     // find app's default container
-    NSURL* appGroupFolder = [[LCSharedUtils appGroupPath] URLByAppendingPathComponent:@"LiveContainer"];
+    NSURL* appGroupFolder = [[LCSharedUtils appGroupPath] URLByAppendingPathComponent:@"GameCase"];
     
     NSString* bundleInfoPath = [NSString stringWithFormat:@"%@/Applications/%@/LCAppInfo.plist", appGroupFolder.path, bundleId];
     NSDictionary* infoDict = [NSDictionary dictionaryWithContentsOfFile:bundleInfoPath];
@@ -399,7 +399,7 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
 }
 
 + (NSArray<NSString*>*)lcUnorderedUrlSchemes {
-    NSArray<NSString *> *defaultSchemes = @[@"livecontainer", @"livecontainer2", @"livecontainer3"];
+    NSArray<NSString *> *defaultSchemes = @[@"gamecase", @"gamecase2", @"gamecase3"];
     return defaultSchemes;
 }
 

@@ -307,7 +307,7 @@ class LCAppModel: ObservableObject, Hashable {
                     LCUtils.appGroupUserDefault.set(Date.now, forKey: "LCLaunchExtensionLaunchDate")
                     var launchURLComp = URLComponents()
                     launchURLComp.scheme = freeScheme
-                    launchURLComp.host = "livecontainer-launch"
+                    launchURLComp.host = "gamecase-launch"
                     var queryItems: [URLQueryItem] = []
                     if let bundlePath = self.appInfo.relativeBundlePath {
                         queryItems.append(URLQueryItem(name: "bundle-name", value: bundlePath))

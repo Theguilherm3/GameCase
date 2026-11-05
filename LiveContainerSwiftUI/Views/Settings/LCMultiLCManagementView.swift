@@ -21,9 +21,9 @@ private struct LaunchPriorityLC: Identifiable, Hashable {
 }
 
 private let knownLiveContainers = [
-    LaunchPriorityLC(scheme: "livecontainer", displayName: "LiveContainer"),
-    LaunchPriorityLC(scheme: "livecontainer2", displayName: "LiveContainer2"),
-    LaunchPriorityLC(scheme: "livecontainer3", displayName: "LiveContainer3")
+    LaunchPriorityLC(scheme: "gamecase", displayName: "GameCase"),
+    LaunchPriorityLC(scheme: "gamecase2", displayName: "GameCase2"),
+    LaunchPriorityLC(scheme: "gamecase3", displayName: "GameCase3")
 ]
 
 struct InstallAnotherLCButton : View {
@@ -82,8 +82,8 @@ struct LCMultiLCManagementView : View, InstallAnotherLCButtonDelegate {
     var body: some View {
         Form {
             Section {
-                InstallAnotherLCButton(lcName: "LiveContainer2", delegate: self)
-                InstallAnotherLCButton(lcName: "LiveContainer3", delegate: self)
+                InstallAnotherLCButton(lcName: "GameCase2", delegate: self)
+                InstallAnotherLCButton(lcName: "GameCase3", delegate: self)
             } header: {
                 Text("lc.settings.multiLCInstall".loc)
             }
@@ -147,7 +147,7 @@ struct LCMultiLCManagementView : View, InstallAnotherLCButtonDelegate {
     }
     
     private func isInstalled(scheme: String) -> Bool {
-        if scheme == "livecontainer" {
+        if scheme == "gamecase" {
             return true
         }
         guard let url = URL(string: "\(scheme)://") else {

@@ -247,9 +247,9 @@
 - (NSDictionary *)generateWebClipConfigWithContainerId:(NSString*)containerId iconStyle:(GeneratedIconStyle)style{
     NSString* appClipUrl;
     if(containerId) {
-        appClipUrl = [NSString stringWithFormat:@"livecontainer://livecontainer-launch?bundle-name=%@&container-folder-name=%@", self.bundlePath.lastPathComponent, containerId];
+        appClipUrl = [NSString stringWithFormat:@"gamecase://gamecase-launch?bundle-name=%@&container-folder-name=%@", self.bundlePath.lastPathComponent, containerId];
     } else {
-        appClipUrl = [NSString stringWithFormat:@"livecontainer://livecontainer-launch?bundle-name=%@", self.bundlePath.lastPathComponent];
+        appClipUrl = [NSString stringWithFormat:@"gamecase://gamecase-launch?bundle-name=%@", self.bundlePath.lastPathComponent];
     }
     
     UIImage* icon = [self generateLiveContainerWrappedIconWithStyle:style];
@@ -267,7 +267,7 @@
         @"PayloadUUID": NSUUID.UUID.UUIDString,
         @"PayloadVersion": @(1),
         @"Precomposed": @NO,
-        @"toPayloadOrganization": @"LiveContainer",
+        @"toPayloadOrganization": @"GameCase",
         @"URL": appClipUrl
     };
     return @{
@@ -278,7 +278,7 @@
         @"PayloadDescription": payload[@"PayloadDescription"],
         @"PayloadDisplayName": self.displayName,
         @"PayloadIdentifier": self.bundleIdentifier,
-        @"PayloadOrganization": @"LiveContainer",
+        @"PayloadOrganization": @"GameCase",
         @"PayloadRemovalDisallowed": @(NO),
         @"PayloadType": @"Configuration",
         @"PayloadUUID": @"345097fb-d4f7-4a34-ab90-2e3f1ad62eed",

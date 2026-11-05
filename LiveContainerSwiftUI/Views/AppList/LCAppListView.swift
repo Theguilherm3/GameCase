@@ -1360,7 +1360,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                     Task { await openWebView(urlString: decodedUrl) }
                 }
             }
-        } else if url.host == "livecontainer-launch" {
+        } else if url.host == "gamecase-launch" {
             if let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
                 var bundleId : String? = nil
                 var containerName : String? = nil

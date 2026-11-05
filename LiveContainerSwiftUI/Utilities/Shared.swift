@@ -25,10 +25,10 @@ struct LCPath {
         let fm = FileManager()
         // it seems that Apple don't want to create one for us, so we just borrow our Store's
         if let appGroupPathUrl = LCSharedUtils.appGroupPath() {
-            return appGroupPathUrl.appendingPathComponent("LiveContainer")
+            return appGroupPathUrl.appendingPathComponent("GameCase")
         } else if let appGroupPathUrl =
                     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.SideStore.SideStore") {
-            return appGroupPathUrl.appendingPathComponent("LiveContainer")
+            return appGroupPathUrl.appendingPathComponent("GameCase")
         } else {
             return docPath
         }
@@ -94,7 +94,7 @@ class SharedModel: ObservableObject {
     public static let keychainAccessGroupCount = 128
     
     func updateMultiLCStatus() {
-        if LCUtils.appUrlScheme()?.lowercased() != "livecontainer" {
+        if LCUtils.appUrlScheme()?.lowercased() != "gamecase" {
             multiLCStatus = 2
         } else {
             multiLCStatus = 0

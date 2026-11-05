@@ -8,10 +8,10 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.kdt.livecontainer.extensionurlscheme</string>
+			<string>com.tiaoge.gamecase.extensionurlscheme</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>liveprocess</string>
+				<string>gamecaseprocess</string>
 			</array>
 		</dict>
 	</array>
@@ -83,8 +83,8 @@
 		<string>_device-info._tcp</string>
 		<string>_sleep-proxy._udp</string>
 		<string>_dns-sd._udp</string>
-        <string>_remotepairing-pairable-host._tcp</string>
-        <string>_stikpairprobe._tcp</string>
+		<string>_remotepairing-pairable-host._tcp</string>
+		<string>_stikpairprobe._tcp</string>
 	</array>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>The guest app is requesting for this permission.</string>
@@ -97,14 +97,14 @@
 			<key>NSExtensionActivationRule</key>
 			<string>FALSEPREDICATE</string>
 		</dict>
+		<key>NSExtensionContextClass</key>
+		<string>NSExtensionContext</string>
+		<key>NSExtensionContextHostClass</key>
+		<string>NSExtensionContext</string>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.ar.viewer</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>LiveProcessHandler</string>
-		<key>NSExtensionContextClass</key>
-        <string>NSExtensionContext</string>
-        <key>NSExtensionContextHostClass</key>
-        <string>NSExtensionContext</string>
 	</dict>
 	<key>NSLocationDefaultAccuracyReduced</key>
 	<true/>
@@ -128,14 +128,14 @@
 		<string>remote-notification</string>
 		<string>voip</string>
 	</array>
-    <key>XPCService</key>
-    <dict>
-        <key>ServiceType</key>
-        <string>Application</string>
-        <key>_MultipleInstances</key>
-        <true/>
-        <key>_ProcessType</key>
-        <string>App</string>
-    </dict>
+	<key>XPCService</key>
+	<dict>
+		<key>ServiceType</key>
+		<string>Application</string>
+		<key>_MultipleInstances</key>
+		<true/>
+		<key>_ProcessType</key>
+		<string>App</string>
+	</dict>
 </dict>
 </plist>

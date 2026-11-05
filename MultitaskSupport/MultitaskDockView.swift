@@ -17,7 +17,7 @@ class AppInfoProvider {
     
     private var infoCacheByUUID = [String: LCAppInfo]()
     private var infoCacheByName = [String: LCAppInfo]()
-    private let cacheQueue = DispatchQueue(label: "com.livecontainer.appinfoprovider.cachequeue", attributes: .concurrent)
+    private let cacheQueue = DispatchQueue(label: "com.gamecase.appinfoprovider.cachequeue", attributes: .concurrent)
     
     private init() {}
     
