@@ -57,9 +57,16 @@ struct LCGameSettingsView: View {
     }
 
     var body: some View {
+        // 横屏收窄加在容器本体（ScrollView）上：LCSettingsColumn 在页面根层
+        // 读自身尺寸，横屏时把 ScrollView 显式定宽 640 并居中，封面/标题/
+        // 全部分组随之一起收进列内；竖屏时 ScrollView 仍是全宽全高，与原来
+        // 逐点一致。PR #10 把 .frame(maxWidth: 640) 加在滚动内容 VStack 上，
+        // 真机落点 ≈669pt 且各页不一致——内容的帧不治理滚动视口宽度，本轮
+        // 改到视口层（详见 LCSettingsColumn.swift 的注释）。
+        LCSettingsColumn { isLandscape in
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                header
+                header(isLandscape: isLandscape)
                     .fullScreenCover(item: $cropItem) { item in
                         NavigationView {
                             LCCoverCropView(image: item.image) { cropped in
@@ -117,13 +124,11 @@ struct LCGameSettingsView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 40)
-            // 横屏收窄（效仿 NX2Apple 壳设置页 ShellSettingsView 的定宽列：
-            // 内容列 maxWidth 640、外层满宽居中）：封面条、标题、所有分组卡
-            // 一起收进居中列，两侧留黑（页底色）。竖屏屏宽 < 640 时列宽即
-            // 可用宽，排版与原来逐点一致。收的是 sheet 内的内容列，sheet
-            // 本身的呈现尺寸不变。
-            .frame(maxWidth: 640)
+            // 展开到 ScrollView 视口全宽（横屏即 640 列、竖屏即屏宽）；
+            // 定宽本身由外层 LCSettingsColumn 给 ScrollView 本体，内容层
+            // 不再加 maxWidth（PR #10 在这里加 640 未生效，见上）。
             .frame(maxWidth: .infinity)
+        }
         }
         .background(Self.pageBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
@@ -167,21 +172,52 @@ struct LCGameSettingsView: View {
         }
     }
 
-    // MARK: 头部（封面条 + 标题与副标题；关闭走工具栏左上角「取消」，见 body 的 toolbar）
+    // MARK: 头部（横屏：封面条 + 标题与副标题；竖屏：应用图标行；关闭走工具栏左上角「取消」，见 body 的 toolbar）
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            coverStrip
-            VStack(alignment: .leading, spacing: 4) {
-                Text(app.displayName)
-                    .font(.title2.bold())
-                    .foregroundColor(LCGameTheme.creamColor)
-                Text("\(knownGame?.shortName ?? app.displayName) · \(app.version) · 设置写入游戏容器，下次启动生效")
-                    .font(.footnote)
-                    .foregroundColor(.gray)
+    @ViewBuilder
+    private func header(isLandscape: Bool) -> some View {
+        if isLandscape {
+            VStack(alignment: .leading, spacing: 14) {
+                coverStrip
+                titleBlock
+            }
+            .padding(.top, 8)
+        } else {
+            // 竖屏不用 16:9 宽封面条：桌面图标靠左、右侧游戏名与副标题，
+            // 按 iOS 设置页常见的图标头规格（图标 62pt、圆角 14、图文间距 14）
+            HStack(spacing: 14) {
+                appIconHeader
+                titleBlock
+            }
+            .padding(.top, 8)
+        }
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(app.displayName)
+                .font(.title2.bold())
+                .foregroundColor(LCGameTheme.creamColor)
+            Text("\(knownGame?.shortName ?? app.displayName) · \(app.version) · 设置写入游戏容器，下次启动生效")
+                .font(.footnote)
+                .foregroundColor(.gray)
+        }
+    }
+
+    /// 竖屏头部图标：游戏的桌面图标原图（与主页图标、封面条无横图时的回退同源）
+    private var appIconHeader: some View {
+        Group {
+            if let icon = app.appInfo.iconIsDarkIcon(darkModeIcon) {
+                Image(uiImage: icon)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Rectangle().fill(Color.white.opacity(0.06))
             }
         }
-        .padding(.top, 8)
+        .frame(width: 62, height: 62)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipped()
     }
 
     @ViewBuilder

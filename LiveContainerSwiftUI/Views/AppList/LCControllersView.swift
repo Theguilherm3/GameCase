@@ -79,6 +79,11 @@ struct LCControllersView: View {
     // MARK: 列表页（NX ControllersView 本体）
 
     private var listPage: some View {
+        // 横屏定宽与游戏设置页同一层：LCSettingsColumn 把 ScrollView 本体
+        // 定宽 640 并居中（PR #10 在内容 VStack 上加 maxWidth、且外层照抄了
+        // NX 的 .leading 对齐，真机列宽 ≈668pt 还靠左贴边、右侧留死黑；
+        // 视口层定宽后列居中、宽度精确——见 LCSettingsColumn.swift）。
+        LCSettingsColumn { _ in
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
                 HStack(alignment: .center) {
@@ -108,10 +113,10 @@ struct LCControllersView: View {
                 buttonsSection
             }
             .padding(24)
-            .frame(maxWidth: 640)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .lcHideScrollIndicators()
+        }
     }
 
     private var emptyCard: some View {

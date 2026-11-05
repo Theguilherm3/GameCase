@@ -82,7 +82,14 @@ struct LCSettingsView: View {
     
     var body: some View {
         NavigationView {
-            settingsForm
+            // 横屏定宽加在容器本体（Form）上：LCSettingsColumn 在页面根层读
+            // 自身尺寸，横屏时把 Form 显式定宽 640 并居中（此页此前没有任何
+            // 640 约束，横屏整表满宽；Form 是列表容器、行宽由它决定，见
+            // LCSettingsColumn.swift）。经 NavigationLink 推出的子页是独立
+            // 视图、不随此列收窄（与原来一致）。
+            LCSettingsColumn { _ in
+                settingsForm
+            }
                 .toolbar {
                     // 关闭钮与数据包导入页「取消」同款做法：sheet 自己的工具栏
                     // cancellationAction 位、素 Button 无自加样式，新系统在 sheet
