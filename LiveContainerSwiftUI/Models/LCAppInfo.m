@@ -260,7 +260,7 @@
         @"IgnoreManifestScope": @YES,
         @"IsRemovable": @YES,
         @"Label": self.displayName,
-        @"PayloadDescription": [NSString stringWithFormat:@"Web Clip for launching %@ (%@) in LiveContainer", self.displayName, self.bundlePath.lastPathComponent],
+        @"PayloadDescription": [NSString stringWithFormat:@"Web Clip for launching %@ (%@) in GameCase", self.displayName, self.bundlePath.lastPathComponent],
         @"PayloadDisplayName": self.displayName,
         @"PayloadIdentifier": self.bundleIdentifier,
         @"PayloadType": @"com.apple.webClip.managed",
@@ -272,7 +272,7 @@
     };
     return @{
         @"ConsentText": @{
-            @"default": [NSString stringWithFormat:@"This profile installs a web clip which opens %@ (%@) in LiveContainer", self.displayName, self.bundlePath.lastPathComponent]
+            @"default": [NSString stringWithFormat:@"This profile installs a web clip which opens %@ (%@) in GameCase", self.displayName, self.bundlePath.lastPathComponent]
         },
         @"PayloadContent": @[payload],
         @"PayloadDescription": payload[@"PayloadDescription"],
@@ -312,7 +312,7 @@
     bool needPatch = [info[@"LCPatchRevision"] intValue] < currentPatchRev;
     if (needPatch || forceSign) {
         // copy-delete-move to avoid EXC_BAD_ACCESS (SIGKILL - CODESIGNING)
-        NSString *backupPath = [NSString stringWithFormat:@"%@/%@_LiveContainerPatchBackUp", appPath, _infoPlist[@"CFBundleExecutable"]];
+        NSString *backupPath = [NSString stringWithFormat:@"%@/%@_GameCasePatchBackUp", appPath, _infoPlist[@"CFBundleExecutable"]];
         NSError *err;
         [fm copyItemAtPath:execPath toPath:backupPath error:&err];
         [fm removeItemAtPath:execPath error:&err];

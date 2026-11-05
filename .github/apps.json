@@ -10,7 +10,7 @@
   "apps": [
     {
       "beta": false,
-      "name": "LiveContainer",
+      "name": "GameCase",
       "bundleIdentifier": "com.kdt.livecontainer",
       "developerName": "LiveContainer Team",
       "subtitle": "Run iOS apps without actually installing them!",
