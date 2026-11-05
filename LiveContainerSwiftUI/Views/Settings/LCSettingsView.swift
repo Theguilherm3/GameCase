@@ -327,6 +327,12 @@ struct LCSettingsView: View {
             Section {
                 HStack {
                     Image("GitHub")
+                    Button("Tiaoge-tou/GameCase") {
+                        openGameCase()
+                    }
+                }
+                HStack {
+                    Image("GitHub")
                     Button("LiveContainer/LiveContainer") {
                         openGitHub()
                     }
@@ -343,14 +349,24 @@ struct LCSettingsView: View {
                         openGitHub2()
                     }
                 }
+                HStack {
+                    Image(systemName: "doc.text")
+                        .frame(width: 24, alignment: .center)
+                    Button("GNU AGPL-3.0") {
+                        openLicense()
+                    }
+                }
             } header: {
                 Text("lc.settings.about".loc)
             } footer: {
-                Text("lc.settings.warning".loc)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("GameCase 基于开源项目 LiveContainer 构建，遵循 GNU AGPL-3.0 协议。原作者 Duy Tran，主要维护者 hugeBlack。")
+                    Text("lc.settings.warning".loc)
+                }
             }
             
             VStack{
-                Text(LCUtils.getVersionInfo())
+                Text("GameCase \(LCUtils.getVersionInfo())")
                     .foregroundStyle(.gray)
                     .onTapGesture(count: 5) {
                         sharedModel.developerMode = true
@@ -485,6 +501,14 @@ struct LCSettingsView: View {
         )
     }
     
+    func openGameCase() {
+        UIApplication.shared.open(URL(string: "https://github.com/Tiaoge-tou/GameCase")!)
+    }
+
+    func openLicense() {
+        UIApplication.shared.open(URL(string: "https://github.com/Tiaoge-tou/GameCase/blob/main/LICENSE")!)
+    }
+
     func openGitHub() {
         UIApplication.shared.open(URL(string: "https://github.com/LiveContainer/LiveContainer")!)
     }
