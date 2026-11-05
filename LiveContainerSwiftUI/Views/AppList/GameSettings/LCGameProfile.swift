@@ -204,8 +204,10 @@ enum LCGameProfile {
         return s
     }
 
-    private static func toggle(_ env: String, _ section: String, _ label: String, _ def: String, note: String = "") -> LCLauncherSetting {
-        LCLauncherSetting(env: env, kind: "toggle", section: section, label: label, note: note, defaultValue: def)
+    private static func toggle(_ env: String, _ section: String, _ label: String, _ def: String, needs: String? = nil, note: String = "") -> LCLauncherSetting {
+        var s = LCLauncherSetting(env: env, kind: "toggle", section: section, label: label, note: note, defaultValue: def)
+        s.needs = needs
+        return s
     }
 
     private static func range(_ env: String, _ section: String, _ label: String, _ def: String,
@@ -311,7 +313,7 @@ final class LCGamePrefs {
     }
 
     private(set) var values: [String: Any] = [:]
-    private var format: PropertyListFormat = .binary
+    private var format: PropertyListSerialization.PropertyListFormat = .binary
 
     init(container: LCContainer, bundleIdentifier: String) {
         self.container = container
@@ -325,7 +327,7 @@ final class LCGamePrefs {
             format = .binary
             return
         }
-        var fmt: PropertyListFormat?
+        var fmt: PropertyListSerialization.PropertyListFormat?
         if let dict = (try? PropertyListSerialization.propertyList(from: data, format: &fmt)) as? [String: Any] {
             values = dict
             format = fmt ?? .binary
