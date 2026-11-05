@@ -78,6 +78,10 @@ struct LCGameHomeView: View {
     /// 本视图内部 GeometryReader 带 .ignoresSafeArea()，它读到的
     /// geo.safeAreaInsets 恒为 0，不能直接用作浮钮排的定位依据。
     let safeAreaInsets: EdgeInsets
+    /// 安全区尺寸：同一个列表层 GeometryReader 的 size。NX CoverFlow 的
+    /// 度量参考系就是安全区 geometry（LibraryView 把 geometry.size 与
+    /// safeAreaInsets 一起传给 CoverFlowView），横屏度量按它算。
+    let safeSize: CGSize
     /// 库内容刷新令牌：变化即本视图 body 重跑，封面与数据包状态点按磁盘重算
     let refreshToken: Int
 
@@ -797,10 +801,15 @@ struct LCGameHomeView: View {
 
     // MARK: 横屏（NX2 CoverFlow 移植：几何与吸附规则照 DmShell CoverFlowView）
 
-    /// 横屏度量：卡高由上下两头反推（下：卡底要给信息区让位；上：卡顶不
-    /// 进顶栏区），再被屏宽 54% 的 16:9 封顶，最后 /1.06 给倾斜留头寸。
-    /// 本视图全屏出血、安全区由列表层注入，故中点按整屏高取（与 NX 在
-    /// 安全区内度量等值）。short = 屏高 < 520（手机横屏）。
+    /// 横屏度量：与 NX CoverFlowView 同一度量参考系——全部量在安全区
+    /// geometry 内原样计算（safeSize + safeAreaInsets，正是 NX
+    /// LibraryView 传给 CoverFlowView 的 geometry.size + screenInsets），
+    /// 不再用全屏尺寸做「等值换算」：旧换算的两处宽度封顶（0.54 cap 与
+    /// shelf cap）误用全屏宽，卡区锚点也脱离了 NX 的 middle 定义，
+    /// 安全区左右留边越大的机型偏得越多（Phase 13）。
+    /// 卡高由上下两头反推（下：卡底要给信息区让位；上：卡顶不进顶栏
+    /// 区），再被安全区宽 54% 的 16:9 封顶，最后 /1.06 给倾斜留头寸。
+    /// short = 安全区高 < 520（手机横屏）。
     private struct LCLandscapeMetrics {
         let short: Bool
         let cover: CGFloat
@@ -809,29 +818,35 @@ struct LCGameHomeView: View {
         let cardAreaTop: CGFloat
         let gap: CGFloat
         let titleSize: CGFloat
+        /// 安全区宽：shelf 的卡宽封顶按它算（NX shelf 的 width 入参）
+        let contentWidth: CGFloat
 
-        init(size: CGSize, safe: EdgeInsets) {
-            let w = size.width
-            let h = size.height
-            short = h < 520
+        init(safeSize: CGSize, safe: EdgeInsets) {
+            let width = safeSize.width
+            let height = safeSize.height
+            short = height < 520
             titleSize = short ? 18 : 28
             let words = titleSize * 1.3 * 2 + 8 + 34
             gap = short ? 10 : 24
             let below: CGFloat = short ? 4 : 56
             let barTop: CGFloat = short ? 12 : 16
-            let byBottom = 2 * (h / 2 - safe.bottom - gap - words - below)
-            let byTop = 2 * ((h / 2 - safe.top) - barTop - 44 - (short ? 6 : 16))
-            let cardHeight = max(90, min(byBottom, byTop, w * 0.54 * 9 / 16) / 1.06)
+            // 整屏中点在安全区坐标系里的位置（NX middle 定义原式）
+            let middle = (height + safe.top + safe.bottom) / 2 - safe.top
+            let byBottom = 2 * (height - middle - gap - words - below)
+            let byTop = 2 * (middle - barTop - 44 - (short ? 6 : 16))
+            let cardHeight = max(90, min(byBottom, byTop, width * 0.54 * 9 / 16) / 1.06)
             cover = cardHeight * 16 / 9
             stride = cover + cover * 0.04
             cardAreaHeight = cardHeight * 1.06
-            cardAreaTop = h / 2 - cardAreaHeight / 2
+            // 卡区顶换算回本视图（全屏出血）坐标：安全区原点 + middle
+            cardAreaTop = safe.top + middle - cardAreaHeight / 2
+            contentWidth = width
         }
     }
 
     private func landscape(size: CGSize, safe: EdgeInsets) -> some View {
         let w = size.width
-        let metrics = LCLandscapeMetrics(size: size, safe: safe)
+        let metrics = LCLandscapeMetrics(safeSize: safeSize, safe: safe)
         let list = landscapeApps
         let focusIdx = landscapeFocusIndex(in: list)
         return ZStack(alignment: .top) {
@@ -841,7 +856,7 @@ struct LCGameHomeView: View {
             VStack(spacing: 0) {
                 Group {
                     if list.count <= 3 {
-                        landscapeShelf(list: list, metrics: metrics, width: w)
+                        landscapeShelf(list: list, metrics: metrics, width: metrics.contentWidth)
                     } else {
                         landscapeCarousel(list: list, metrics: metrics, size: size)
                     }
