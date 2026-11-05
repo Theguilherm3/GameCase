@@ -37,6 +37,18 @@ struct AppReplaceOption : Hashable {
     var appToReplace: LCAppModel?
 }
 
+/// 每游戏设置页的 sheet 载荷：id 用包相对路径，同一游戏重复打开即同一弹层
+struct LCGameSettingsSheetItem: Identifiable {
+    let app: LCAppModel
+    var id: String { app.appInfo.relativeBundlePath as String }
+}
+
+/// 遗留 AnyView 页（LCAppBannerDelegate 入口）的 sheet 载荷
+struct LCLegacySheetItem: Identifiable {
+    let id = UUID()
+    let view: AnyView
+}
+
 struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     @State var didAppear = false
     // ipa choosing stuff
@@ -69,8 +81,11 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     @State var safariViewOpened = false
     @State var safariViewURL = URL(string: "https://google.com")!
     
-    @State private var navigateTo : AnyView?
-    @State private var isNavigationActive = false
+    // 每游戏设置页 / 隐藏游戏页的 sheet 呈现状态（Phase 5 起弃用隐藏
+    // NavigationLink push：链接式关闭在真机连续两轮失效，见 openGameSettings）
+    @State var gameSettingsItem: LCGameSettingsSheetItem? = nil
+    @State var hiddenAppsPresented = false
+    @State var legacySheetItem: LCLegacySheetItem? = nil
 
     // 游戏库换皮：数据包导入（Phase 2 接通）与卸载确认
     @State var datapackImportRequest: LCDatapackRequest? = nil
@@ -115,26 +130,16 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         )
     }
 
-    /// 打开每游戏设置页：与旧卡片长按菜单同一路径（隐藏 NavigationLink 推进，
-    /// onClose 走 closeNavigationView 弹出），JIT sheet 与错误 alert 仍锚在本层
+    /// 打开每游戏设置页：sheet 弹层呈现（与容器设置、数据包导入页同款机制，
+    /// 真机已证明可呈现、可关闭、可交互）。全部入口（主页滑杆钮、网格卡长按、
+    /// 最近游玩行长按、隐藏页行）都汇到这一个函数、同一个 sheet 状态。
+    /// 旧路径是隐藏 NavigationLink push：关闭靠跨视图写本层的 isActive @State，
+    /// 连续两轮修复（dismiss 语义、关页时序）在真机都没让顶部按钮活过来，故整体换掉。
     func openGameSettings(app: LCAppModel) {
-        openNavigationView(view: AnyView(LCGameSettingsView(
-            app: app,
-            onRun: {
-                // 启动编排归本层统一负责：先关设置页，等弹出完成再启动。
-                // JIT 确认 sheet 与错误弹窗都锚在本层，设置页还盖在上面时
-                // 它们弹不出来，启动会无声卡住（与隐藏页 onRun 同一编排）。
-                closeNavigationView()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                    runGame(app: app)
-                }
-            },
-            onOpenDataFolder: { openGameDataFolder(app: app) },
-            onClose: { closeNavigationView() }
-        )))
+        gameSettingsItem = LCGameSettingsSheetItem(app: app)
     }
 
-    /// 隐藏游戏恢复入口（主页 ＋ 菜单）：未解锁先鉴权，再推进隐藏游戏页
+    /// 隐藏游戏恢复入口（主页 ＋ 菜单）：未解锁先鉴权，再以 sheet 打开隐藏游戏页
     func openHiddenApps() {
         Task {
             if !sharedModel.isHiddenAppUnlocked {
@@ -148,25 +153,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                     return
                 }
             }
-            openNavigationView(view: AnyView(LCHiddenAppsView(
-                onRun: { app in
-                    // 启动所需的 JIT sheet / 错误 alert 锚在本层，先退回主页再启动（同 PR #3 设置页修法）
-                    closeNavigationView()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                        runGame(app: app)
-                    }
-                },
-                onSettings: { app in
-                    closeNavigationView()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                        openGameSettings(app: app)
-                    }
-                },
-                onOpenDataFolder: { openGameDataFolder(app: $0) },
-                onImportDatapack: { datapackImportRequest = LCDatapackRequest(app: $0) },
-                onUninstall: { appPendingUninstall = $0 },
-                onUnhide: { unhideApp(app: $0) }
-            )))
+            hiddenAppsPresented = true
         }
     }
 
@@ -180,14 +167,6 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     var body: some View {
         NavigationView {
             ZStack {
-                NavigationLink(
-                    destination: navigateTo,
-                    isActive: $isNavigationActive,
-                    label: {
-                        EmptyView()
-                })
-                .hidden()
-
                 // 游戏库主页（NX2Apple 壳式界面）：呈现与聚焦在 LCGameHomeView，
                 // 启动 / 设置 / 导入 / 卸载全部回调回本视图的既有机制。
                 // 这一层不忽略安全区，GeometryReader 读到的是真实 safeAreaInsets，
@@ -252,6 +231,60 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         }
         .sheet(item: $datapackImportRequest) { request in
             LCDatapackImportView(request: request, apps: sharedModel.apps + sharedModel.hiddenApps)
+        }
+        .sheet(item: $gameSettingsItem) { item in
+            // 设置页自带头部（‹ 游戏库 = 本 sheet 的 dismiss、启动 = 下方 onRun），
+            // 这里包一层 NavigationView 供页内子页（按键布局编辑器、高级设置）推进。
+            NavigationView {
+                LCGameSettingsView(
+                    app: item.app,
+                    onRun: {
+                        // 启动编排归本层：先收 sheet，等弹层退场完成再启动。
+                        // JIT 确认 sheet 与错误弹窗都锚在本层，设置页还盖在上面时
+                        // 它们弹不出来，启动会无声卡住（与隐藏页同一延时模式）。
+                        gameSettingsItem = nil
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            runGame(app: item.app)
+                        }
+                    },
+                    onOpenDataFolder: { openGameDataFolder(app: item.app) }
+                )
+            }
+            .navigationViewStyle(StackNavigationViewStyle())
+        }
+        .sheet(isPresented: $hiddenAppsPresented) {
+            NavigationView {
+                LCHiddenAppsView(
+                    onRun: { app in
+                        hiddenAppsPresented = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            runGame(app: app)
+                        }
+                    },
+                    onSettings: { app in
+                        // 先收隐藏页 sheet，等退场后再开设置 sheet（两层弹层不能同帧交接）
+                        hiddenAppsPresented = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            openGameSettings(app: app)
+                        }
+                    },
+                    onOpenDataFolder: { openGameDataFolder(app: $0) },
+                    onImportDatapack: { app in
+                        // 数据包 sheet 锚在本层、被隐藏页 sheet 盖住时呈不出来，
+                        // 先收隐藏页再开数据包导入
+                        hiddenAppsPresented = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            datapackImportRequest = LCDatapackRequest(app: app)
+                        }
+                    },
+                    onUninstall: { appPendingUninstall = $0 },
+                    onUnhide: { unhideApp(app: $0) }
+                )
+            }
+            .navigationViewStyle(StackNavigationViewStyle())
+        }
+        .sheet(item: $legacySheetItem) { item in
+            item.view
         }
         .confirmationDialog(uninstallDialogTitle, isPresented: uninstallDialogPresented, titleVisibility: .visible) {
             Button("卸载（保留数据）", role: .destructive) {
@@ -1199,9 +1232,11 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         safariViewOpened = true
     }
     
+    /// LCAppBannerDelegate 的遗留入口（上游 UIKit 横幅的「打开设置」）：横幅
+    /// representable 在本 fork 的界面里已无实例化点，此入口仅为协议完整性保留，
+    /// 呈现统一走 sheet，不再有第二套 push 机制。
     func openNavigationView(view: AnyView) {
-        navigateTo = view
-        isNavigationActive = true
+        legacySheetItem = LCLegacySheetItem(view: view)
     }
     
     func promptForGeneratedIconStyle() async -> GeneratedIconStyle? {
@@ -1213,15 +1248,13 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         
     }
     
+    /// LCAppModelDelegate 的关页钩子（名称沿用上游协议）：模型层在隐藏应用等
+    /// 路径上调它收掉当前页。呈现机制换成 sheet 后，这里统一收掉库内全部弹层
+    /// （如在高级设置里隐藏当前游戏 → 设置 sheet 随之关闭，语义与旧 push 版一致）。
     func closeNavigationView() {
-        // 关页只翻转激活态，destination 保留到下次 openNavigationView 覆盖。
-        // 原写法在同一事务里既置 isNavigationActive=false 又把 navigateTo 置 nil：
-        // NavigationLink 会先按新 destination 重建、去激活随之被吞，真机表现为
-        // 设置页顶部按钮点了毫无反应。此处再异步一拍翻转，避开目标页自身按钮
-        // 事件处理中的同步状态写。关页自此只有这一条路径。
-        DispatchQueue.main.async {
-            isNavigationActive = false
-        }
+        gameSettingsItem = nil
+        hiddenAppsPresented = false
+        legacySheetItem = nil
     }
     
     func copyError() {
