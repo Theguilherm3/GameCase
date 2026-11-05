@@ -484,6 +484,7 @@ static UIImage *LCQBHouseImage(CGFloat side, CGFloat alpha, CGFloat lineWidth) {
 - (void)attachToActiveSceneIfNeeded;
 - (void)collapseFromOutsideTap;
 - (void)relayoutForBounds:(CGRect)bounds;
+- (void)screenSizeMayHaveChanged;
 @end
 
 @interface LCQBRootView : UIView
@@ -542,11 +543,17 @@ static UIView *LCQBMakeGlass(CGFloat cornerRadius, UIView **outContentView) {
     return wrapper;
 }
 
+static void *LCQBSceneGeometryContext = &LCQBSceneGeometryContext;
+static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
+
 @implementation LCQuickBarHandler {
     UIWindow *_window;
     LCQBRootView *_rootView;
     UIWindowScene *_scene;
     BOOL _attached;
+    CGSize _laidOutSize;
+    NSMutableSet<UIWindow *> *_observedWindows;
+    BOOL _geometryObserving;
 
     UIView *_tongueGlass;
     UIView *_tongueContent;
@@ -621,7 +628,67 @@ static UIView *LCQBMakeGlass(CGFloat cornerRadius, UIView **outContentView) {
     _window = window;
     [self layoutForBounds:scene.coordinateSpace.bounds];
     window.hidden = NO;
+    [self installRotationObservers];
     NSLog(@"[LCBootstrap][quickbar] 快捷栏已挂载（edge=%ld, ratio=%.2f）", (long)_edge, _ratio);
+}
+
+#pragma mark 旋转重排
+
+// 重排不能只靠浮层窗口根 VC 的 viewWillTransitionToSize：真机上竖屏启动、客体把
+// 场景转横屏后，该回调并不送达这个自建窗口的根 VC（窗口是被旋转变换整体搬走的，
+// 内部布局没人重跑），舌就停在竖屏几何上，要点/拖一下触发 layout 才恢复。
+// 改走与 VC 回调无关的可靠信号，任一触发都按场景当前 bounds 核对尺寸、变了才重排：
+//   1) 场景 effectiveGeometry 的 KVO（iOS 16+，UIWindowScene 文档化可观察）；
+//   2) 场景内其他窗口（客体主窗）bounds 的 KVO——客体窗被拉到新全屏尺寸即旋转落地；
+//   3) UIApplicationDidChangeStatusBarOrientationNotification 兜底。
+- (void)installRotationObservers {
+    if (@available(iOS 16.0, *)) {
+        if (!_geometryObserving) {
+            _geometryObserving = YES;
+            [_scene addObserver:self forKeyPath:@"effectiveGeometry" options:0 context:LCQBSceneGeometryContext];
+        }
+    }
+    [self observeSceneWindows];
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(screenSizeMayHaveChanged)
+                                               name:UIApplicationDidChangeStatusBarOrientationNotification
+                                             object:nil];
+}
+
+- (void)observeSceneWindows {
+    if (!_observedWindows) _observedWindows = [NSMutableSet set];
+    for (UIWindow *w in _scene.windows) {
+        if (w == _window || w == _veilWindow || [_observedWindows containsObject:w]) continue;
+        [_observedWindows addObject:w];
+        [w addObserver:self forKeyPath:@"bounds" options:0 context:LCQBWindowBoundsContext];
+    }
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context {
+    if (context == LCQBSceneGeometryContext || context == LCQBWindowBoundsContext) {
+        [self screenSizeMayHaveChanged];
+        return;
+    }
+    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+}
+
+- (void)screenSizeMayHaveChanged {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self relayoutIfScreenSizeChanged];
+        // 窗口 bounds 可能先于场景坐标空间变化，0.3s 后再核对一次兜住滞后
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self relayoutIfScreenSizeChanged];
+        });
+    });
+}
+
+- (void)relayoutIfScreenSizeChanged {
+    if (!_window || !_scene) return;
+    [self observeSceneWindows]; // 顺带补上旋转后/迟建的客体窗口
+    CGRect bounds = _scene.coordinateSpace.bounds;
+    if (bounds.size.width <= 0 || bounds.size.height <= 0) return;
+    if (CGSizeEqualToSize(bounds.size, _laidOutSize)) return;
+    [self layoutForBounds:bounds];
 }
 
 #pragma mark 视图构建
@@ -790,6 +857,7 @@ static UIView *LCQBMakeGlass(CGFloat cornerRadius, UIView **outContentView) {
 
 - (void)layoutForBounds:(CGRect)bounds {
     if (!_window) return;
+    _laidOutSize = bounds.size;
     if (_expanded) {
         _window.frame = bounds;
         _rootView.frame = bounds;

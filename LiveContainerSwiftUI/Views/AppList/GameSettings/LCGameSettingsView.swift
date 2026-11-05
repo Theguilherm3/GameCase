@@ -34,7 +34,6 @@ struct LCGameSettingsView: View {
 
     private static let cardBackground = Color(red: 0.118, green: 0.118, blue: 0.129)
     private static let pageBackground = Color(red: 0.055, green: 0.055, blue: 0.059)
-    private static let accentColor = Color(red: 0.788, green: 0.373, blue: 0.263)
 
     private var knownGame: LCKnownGame? {
         LCKnownGame.from(bundleIdentifier: app.bundleIdentifier)
@@ -67,13 +66,34 @@ struct LCGameSettingsView: View {
         }
         .background(Self.pageBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
-        .navigationBarHidden(true)
+        .navigationTitle(app.displayName)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // 「游戏库」「启动」放工具栏本层（左 cancellationAction / 右
+            // confirmationAction，与数据包页「取消」、容器设置「关闭」同层同机制，
+            // 真机从未失手）。此前两钮自绘在内容区顶部，恰落在被
+            // .navigationBarHidden 藏掉的导航栏保留带内，触摸被导航控制器
+            // 自有层吞掉——三轮点不动都是这个位置问题，不是动作链问题。
+            ToolbarItem(placement: .cancellationAction) {
+                Button("游戏库") {
+                    dismiss()
+                }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("启动") {
+                    onRun()
+                }
+                .disabled(app.isAppRunning)
+            }
+        }
         .onAppear {
             loadState()
         }
         .sheet(item: $datapackRequest) { request in
             LCDatapackImportView(request: request, apps: [app]) {
                 statusRefresh += 1
+                // 导入可能伴随容器注册变化，关页后整页按磁盘重读（含偏好值）
+                loadState()
             }
         }
         .confirmationDialog("恢复默认设置？", isPresented: $confirmReset, titleVisibility: .visible) {
@@ -86,41 +106,10 @@ struct LCGameSettingsView: View {
         }
     }
 
-    // MARK: 头部（预览：‹ 游戏库 胶囊 + 启动胶囊 + 封面条 + 标题与副标题）
+    // MARK: 头部（封面条 + 标题与副标题；返回/启动已移入工具栏，见 body 的 toolbar）
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Button {
-                    dismiss()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                            .font(.footnote.bold())
-                        Text("游戏库")
-                    }
-                    .foregroundColor(LCGameTheme.creamColor)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .background(Color.white.opacity(0.08))
-                    .clipShape(Capsule())
-                }
-                Spacer()
-                Button {
-                    // 启动编排（先关本页、等弹出完成再启动）由列表层注入的 onRun
-                    // 统一负责，本页只发一个动作，避免关页与启动在本页同步连发。
-                    onRun()
-                } label: {
-                    Text("启动")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 26)
-                        .padding(.vertical, 9)
-                        .background(Self.accentColor)
-                        .clipShape(Capsule())
-                }
-                .disabled(app.isAppRunning)
-            }
             coverStrip
             VStack(alignment: .leading, spacing: 4) {
                 Text(app.displayName)
@@ -473,6 +462,10 @@ struct LCGameSettingsView: View {
     // MARK: 状态装载与写入
 
     private func loadState() {
+        // 先把模型里的容器选择对齐到 appInfo 当前记录，再按对齐后的容器读盘：
+        // 客体启动器写偏好走的是被启动容器的 plist，读侧容器若停在模型创建时的
+        // 快照上，就会整页读旧容器的值（客体改了 120、这里还显示 60）。
+        app.refreshContainerSelection()
         let loaded = LCGameProfile.loadSettings(app: app)
         settings = loaded ?? []
         hasProfile = loaded != nil

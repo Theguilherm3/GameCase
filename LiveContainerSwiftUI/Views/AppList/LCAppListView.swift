@@ -273,8 +273,8 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
             LCDatapackImportView(request: request, apps: sharedModel.apps + sharedModel.hiddenApps)
         }
         .sheet(item: $gameSettingsItem) { item in
-            // 设置页自带头部（‹ 游戏库 = 本 sheet 的 dismiss、启动 = 下方 onRun），
-            // 这里包一层 NavigationView 供页内子页（按键布局编辑器、高级设置）推进。
+            // 设置页的「游戏库 / 启动」在页内工具栏（dismiss / 下方 onRun），
+            // 这里包一层 NavigationView 供工具栏落位与页内子页（按键布局编辑器、高级设置）推进。
             NavigationView {
                 LCGameSettingsView(
                     app: item.app,
