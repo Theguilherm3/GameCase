@@ -387,3 +387,17 @@ extension UIViewController {
         }
     }
 }
+
+extension View {
+    /// 专用容器：全屏子页（每游戏设置页 / 按键布局编辑页）呈现时隐藏底部浮动
+    /// TabBar 胶囊，避免遮挡页面底部内容；iOS 16 以下无此 API 时原样返回，
+    /// 页面自身另有底部 inset 兜底。
+    @ViewBuilder
+    public func hideTabBarOnPush() -> some View {
+        if #available(iOS 16.0, *) {
+            self.toolbar(.hidden, for: .tabBar)
+        } else {
+            self
+        }
+    }
+}

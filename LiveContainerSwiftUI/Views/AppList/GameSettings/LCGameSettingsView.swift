@@ -60,8 +60,10 @@ struct LCGameSettingsView: View {
                 footerNote
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 32)
+            // 底部留白 ≥ 浮动底栏胶囊高度 + 间距：即使底栏未隐藏，最后一行也能滚到胶囊上方
+            .padding(.bottom, 110)
         }
+        .hideTabBarOnPush()
         .background(Self.pageBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .navigationBarHidden(true)

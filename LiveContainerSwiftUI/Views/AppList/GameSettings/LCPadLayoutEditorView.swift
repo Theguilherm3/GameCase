@@ -45,27 +45,37 @@ struct LCPadLayoutEditorView: View {
         ZStack {
             backgroundView
             GeometryReader { geo in
-                VStack(spacing: 10) {
-                    header
-                    if geo.size.width >= 700 {
+                if geo.size.width >= 700 {
+                    // 横屏：左画布右面板固定排布；底部多留一段避开浮动底栏胶囊
+                    VStack(spacing: 10) {
+                        header
                         HStack(alignment: .top, spacing: 14) {
                             canvas
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                             panel
                                 .frame(width: 330)
                         }
-                    } else {
+                    }
+                    .padding(14)
+                    .padding(.bottom, 76)
+                } else {
+                    // 竖屏：整页可滚动——上方画布按屏宽等比，下方完整面板全部可达；
+                    // 画布上的按键拖动手势用 highPriorityGesture，不被页面滚动抢走
+                    ScrollView {
                         VStack(spacing: 10) {
+                            header
                             canvas
                                 .frame(maxWidth: .infinity)
                                 .aspectRatio(16 / 9, contentMode: .fit)
                             panel
                         }
+                        .padding(14)
+                        .padding(.bottom, 96)
                     }
                 }
-                .padding(14)
             }
         }
+        .hideTabBarOnPush()
         .preferredColorScheme(.dark)
         .navigationBarHidden(true)
         .confirmationDialog("全部重置？", isPresented: $confirmResetAll, titleVisibility: .visible) {
@@ -153,7 +163,7 @@ struct LCPadLayoutEditorView: View {
             .frame(width: d, height: d)
             .overlay { if selected == key.name { selectionRing(d) } }
             .position(c)
-            .gesture(dragGesture(key.name, in: size))
+            .highPriorityGesture(dragGesture(key.name, in: size))
             .onTapGesture { selected = key.name }
             .zIndex(selected == key.name || drag?.name == key.name ? 2 : 1)
     }
@@ -181,7 +191,7 @@ struct LCPadLayoutEditorView: View {
         .frame(width: d, height: d)
         .overlay { if selected == "stick" { selectionRing(d) } }
         .position(c)
-        .gesture(dragGesture("stick", in: size))
+        .highPriorityGesture(dragGesture("stick", in: size))
         .onTapGesture { selected = "stick" }
         .zIndex(selected == "stick" || drag?.name == "stick" ? 2 : 1)
     }
