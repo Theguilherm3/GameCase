@@ -141,8 +141,9 @@ struct LCGameSettingsView: View {
         }
         .background(Self.pageBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
-        .navigationTitle(app.displayName)
-        .navigationBarTitleDisplayMode(.inline)
+        // 工具栏不设标题（Phase 16D）：页内头部已有游戏名大标题，工具栏
+        // 再挂内联标题是两处重复——只留左上「取消」。sheet 与侧面板
+        // 共用本 body，两形态一并生效。
         .toolbar {
             // 工具栏只留左上角一个「取消」：与数据包导入页的取消同位
             // （.cancellationAction）同型（素 Button + dismiss），系统渲染为
