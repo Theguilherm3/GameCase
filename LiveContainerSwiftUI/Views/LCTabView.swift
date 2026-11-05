@@ -22,21 +22,10 @@ struct LCTabView: View {
     let pub = NotificationCenter.default.publisher(for: UIScene.didDisconnectNotification)
     
     var body: some View {
-        TabView(selection: $sharedModel.selectedTab) {
-            // 专用游戏容器：只保留游戏库与设置两页，源（Sources）与模块（Tweaks）页已摘除，
-            // LCSourcesView / LCTweaksView 文件保留在工程内但不再被底栏引用。
-            LCAppListView()
-                .tabItem {
-                    Label("游戏库", systemImage: "square.grid.2x2.fill")
-                }
-                .tag(LCTabIdentifier.apps)
-            
-            LCSettingsView()
-                .tabItem {
-                    Label("lc.tabView.settings".loc, systemImage: "gearshape.fill")
-                }
-                .tag(LCTabIdentifier.settings)
-        }
+        // 专用游戏容器：单页（游戏库）呈现，无系统底栏——容器设置由主页齿轮以
+        // sheet 打开（LCSettingsView 本身），源（Sources）与模块（Tweaks）页早已
+        // 摘除；selectedTab 仍保留供深链分发，证书类链接由游戏库页转成设置 sheet。
+        LCAppListView()
         .downloadAlert(helper: downloadHelper)
         .environmentObject(downloadHelper)
         .alert("lc.common.error".loc, isPresented: $errorShow){

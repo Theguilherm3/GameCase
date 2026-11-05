@@ -166,7 +166,7 @@ struct LCDatapackImportView: View {
                         .padding(.vertical, 14)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LCGameCardView.accentColor)
+                .tint(LCGameTheme.accentColor)
                 .padding(.horizontal)
                 if request.app == nil {
                     Button("换一款游戏") {
@@ -204,7 +204,7 @@ struct LCDatapackImportView: View {
                             .padding(.vertical, 14)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(LCGameCardView.accentColor)
+                    .tint(LCGameTheme.accentColor)
                 }
                 .padding(.horizontal)
             case .failed(let message):

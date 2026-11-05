@@ -100,7 +100,7 @@ struct LCGameSettingsView: View {
                             .font(.footnote.bold())
                         Text("游戏库")
                     }
-                    .foregroundColor(LCGameCardView.creamColor)
+                    .foregroundColor(LCGameTheme.creamColor)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 9)
                     .background(Color.white.opacity(0.08))
@@ -128,7 +128,7 @@ struct LCGameSettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(app.displayName)
                     .font(.title2.bold())
-                    .foregroundColor(LCGameCardView.creamColor)
+                    .foregroundColor(LCGameTheme.creamColor)
                 Text("\(knownGame?.shortName ?? app.displayName) · \(app.version) · 设置写入游戏容器，下次启动生效")
                     .font(.footnote)
                     .foregroundColor(.gray)
@@ -321,7 +321,7 @@ struct LCGameSettingsView: View {
             } label: {
                 HStack(spacing: 5) {
                     Text(setting.optionLabel(for: value))
-                        .foregroundColor(locked ? .gray : LCGameCardView.creamColor)
+                        .foregroundColor(locked ? .gray : LCGameTheme.creamColor)
                     Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundColor(.gray)
@@ -359,7 +359,7 @@ struct LCGameSettingsView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .foregroundColor(locked ? .gray : LCGameCardView.creamColor)
+            .foregroundColor(locked ? .gray : LCGameTheme.creamColor)
             .disabled(locked)
         default:
             Text(value)
