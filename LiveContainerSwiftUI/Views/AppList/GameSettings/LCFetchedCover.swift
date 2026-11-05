@@ -26,6 +26,21 @@
 //  负缓存时间戳，7 天内不重试；全程静默，失败不打扰用户。抓不到的游戏
 //  由主页大卡的无图兜底美化接住（LCGameCoverView.beautifiedFallback）。
 //
+//  兜底路线（2026-11-06 实测）：标题 ID 在 ec 解析器里没有条目时（区域
+//  独立全量包等），ID 路线必然失败，改用客体显示名走 nintendo.com 商店
+//  搜索（Algolia，配置取自官网前端公开的仅搜索 key，索引
+//  store_game_en_us）→ 名称精确 / 近似全等命中的商品页 → 同一
+//  linkedData 提取与验收门槛。以撒 Repentance（010021C000222000，
+//  US/JP/GB/DE/FR/AU 六区 ec 跳转全 404）实测：名搜返回 2 条，首条是
+//  「Repentance+」(Switch 2 版，nsuid 70010000106369)，次条才是精确
+//  命中的 DLC 商品页 nsuid 70050000031296（linkedData 主图
+//  1920×1080）；仅给部分名（如「Isaac」）或模糊词时命中一堆但无一
+//  全等。故纪律是：只收名称全等命中（见 storeNamesMatch 两档归一），
+//  落到商品页后还要用 linkedData 条目自带的 name 再复核一次，两关
+//  都过才收图；多义 / 模糊命中一律放弃、静默走原兜底，绝不抓错图。
+//  名搜失败与 ID 失败共用同一条负缓存（整链失败才记账），「封面图 →
+//  恢复默认」清负缓存后两条路线都会重开重抓。
+//
 
 import ImageIO
 import SwiftUI
@@ -110,6 +125,14 @@ final class LCCoverFetchService: @unchecked Sendable {
     private static let minimumLandscapeWidth: CGFloat = 1280
     /// 实测与商品页一致的 UA（桌面 / 移动 UA 返回同一页面，用移动版即可）
     private static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    /// nintendo.com 商店搜索的 Algolia 配置：官网前端 JS 里公开发布的
+    /// 仅搜索 key（只能查、不能写）。官方轮换 / 失效时名搜路线静默失败，
+    /// 行为退回只有 ID 路线，不影响既有游戏。
+    private static let storeSearchAppId = "U3B6GR4UA3"
+    private static let storeSearchApiKey = "a29c6927638bfd8cee23993e51e721c9"
+    private static let storeSearchIndex = "store_game_en_us"
+    /// 名搜命中里最多逐个落页验证几条（全等命中通常只有一条）
+    private static let maxNameSearchCandidates = 3
 
     private let lock = NSLock()
     private var inFlight: Set<String> = []
@@ -178,7 +201,7 @@ final class LCCoverFetchService: @unchecked Sendable {
             guard let self else {
                 return
             }
-            let image = await self.fetchStoreCover(titleId: titleId)
+            let image = await self.fetchStoreCover(titleId: titleId, displayName: appInfo.displayName())
             var saved = false
             if let image {
                 saved = (try? LCFetchedCoverStore.save(image, forBundleIdentifier: bundleIdentifier)) != nil
@@ -214,19 +237,38 @@ final class LCCoverFetchService: @unchecked Sendable {
 
     // MARK: 抓取实现（已验通的任天堂官方链）
 
-    /// ec.nintendo.com/apps/<标题ID>/US → 商品页 HTML → linkedData.image → 图。
-    /// 任一步失败 / 图不达标都返回 nil（由调用方记负缓存），全程静默。
-    private func fetchStoreCover(titleId: String) async -> UIImage? {
-        guard let pageURL = URL(string: "https://ec.nintendo.com/apps/\(titleId)/US") else {
-            return nil
+    /// 抓取编排：ID 路线先行（ec.nintendo.com/apps/<标题ID>/US → 商品页 →
+    /// linkedData.image → 图，本来就通的游戏行为与改前逐字一致）；ID 路线
+    /// 失败（404 / 页内无合格图）才走按名搜索兜底。任一路线成功即返回；
+    /// 整链失败返回 nil（由调用方记负缓存），全程静默。
+    private func fetchStoreCover(titleId: String, displayName: String) async -> UIImage? {
+        if let pageURL = URL(string: "https://ec.nintendo.com/apps/\(titleId)/US"),
+           let image = await fetchCoverImage(fromProductPage: pageURL, requiredPageName: nil) {
+            return image
         }
+        return await fetchStoreCoverByName(displayName)
+    }
+
+    /// 商品页 → 主图 → 下载验收（宽 ≥1280 且横版）的共用管线。
+    /// requiredPageName 为 nil 时走既有提取（含正则兜底）；非 nil 时只认
+    /// linkedData 里 name 与目标名精确 / 近似全等的条目（见
+    /// extractVerifiedStoreImageURL），名搜落页的防抓错复核在此生效。
+    private func fetchCoverImage(fromProductPage pageURL: URL, requiredPageName: String?) async -> UIImage? {
         var pageRequest = URLRequest(url: pageURL)
         pageRequest.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         pageRequest.timeoutInterval = 30
         guard let (pageData, pageResponse) = try? await URLSession.shared.data(for: pageRequest),
               (pageResponse as? HTTPURLResponse)?.statusCode == 200,
-              let html = String(data: pageData, encoding: .utf8),
-              let imageURL = Self.extractStoreImageURL(fromHTML: html) else {
+              let html = String(data: pageData, encoding: .utf8) else {
+            return nil
+        }
+        let imageURL: URL?
+        if let requiredPageName {
+            imageURL = Self.extractVerifiedStoreImageURL(fromHTML: html, expectedName: requiredPageName)
+        } else {
+            imageURL = Self.extractStoreImageURL(fromHTML: html)
+        }
+        guard let imageURL else {
             return nil
         }
 
@@ -241,6 +283,117 @@ final class LCCoverFetchService: @unchecked Sendable {
             return nil
         }
         return image
+    }
+
+    // MARK: 按名搜索兜底（仅 ID 路线失败时）
+
+    /// 用客体显示名查 nintendo.com 商店（Algolia store_game_en_us），只收
+    /// 名称精确 / 近似全等的命中，按返回顺序最多落页验证
+    /// maxNameSearchCandidates 条；落页时再以商品页 linkedData 自带的
+    /// name 复核一次（fetchCoverImage 的 requiredPageName）。无全等命中 /
+    /// 全部落页失败 → nil，与 ID 失败共用同一条负缓存记账（整链失败才记，
+    /// 「恢复默认」清负缓存时两条路线一并重开）。
+    private func fetchStoreCoverByName(_ displayName: String) async -> UIImage? {
+        let query = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 2,
+              let searchURL = URL(string: "https://\(Self.storeSearchAppId)-dsn.algolia.net/1/indexes/\(Self.storeSearchIndex)/query"),
+              let body = try? JSONSerialization.data(withJSONObject: ["query": query, "hitsPerPage": 10]) else {
+            return nil
+        }
+        var request = URLRequest(url: searchURL)
+        request.httpMethod = "POST"
+        request.setValue(Self.storeSearchAppId, forHTTPHeaderField: "X-Algolia-Application-Id")
+        request.setValue(Self.storeSearchApiKey, forHTTPHeaderField: "X-Algolia-API-Key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 30
+        request.httpBody = body
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hits = root["hits"] as? [[String: Any]] else {
+            return nil
+        }
+        var tried = 0
+        for hit in hits {
+            guard tried < Self.maxNameSearchCandidates,
+                  let title = hit["title"] as? String,
+                  let path = hit["url"] as? String,
+                  path.hasPrefix("/us/store/products/"),
+                  Self.storeNamesMatch(title, query),
+                  let pageURL = URL(string: "https://www.nintendo.com\(path)") else {
+                continue
+            }
+            tried += 1
+            if let image = await fetchCoverImage(fromProductPage: pageURL, requiredPageName: query) {
+                return image
+            }
+        }
+        return nil
+    }
+
+    /// 名搜落页复核提取：只认 __NEXT_DATA__ 的 linkedData 里同时带
+    /// assets.nintendo.com 主图与 name 的条目，且 name 须与目标名精确 /
+    /// 近似全等（storeNamesMatch）。没有正则兜底——名搜路线的风险全在
+    /// 抓错页，宁可不收也不能靠整页正则蒙中一张图。
+    private static func extractVerifiedStoreImageURL(fromHTML html: String, expectedName: String) -> URL? {
+        guard let open = html.range(of: "id=\"__NEXT_DATA__\""),
+              let tagEnd = html.range(of: ">", range: open.upperBound..<html.endIndex),
+              let close = html.range(of: "</script>", range: tagEnd.upperBound..<html.endIndex) else {
+            return nil
+        }
+        let jsonText = html[tagEnd.upperBound..<close.lowerBound]
+        guard let data = jsonText.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let props = root["props"] as? [String: Any],
+              let pageProps = props["pageProps"] as? [String: Any],
+              let linkedData = pageProps["linkedData"] as? [Any] else {
+            return nil
+        }
+        for entry in linkedData {
+            guard let dict = entry as? [String: Any],
+                  let name = dict["name"] as? String,
+                  storeNamesMatch(name, expectedName),
+                  let image = dict["image"] as? String,
+                  let url = URL(string: image),
+                  url.host == "assets.nintendo.com" else {
+                continue
+            }
+            return url
+        }
+        return nil
+    }
+
+    // MARK: 名称全等护栏
+
+    /// 商店名全等判定：两档归一任一档全等即算命中；绝不做前缀 / 子串 /
+    /// 编辑距离式的模糊匹配。
+    /// - 严格档：大小写与重音折叠、去 ™®©、空白折叠后逐字相等；
+    /// - 压平档：再把 + 读作 plus、& 读作 and，删尽一切非字母数字字符
+    ///   后逐字相等（收「NieR:Automata」对「NieR Automata」这类标点差）。
+    /// 反例必须不等：「The Binding of Isaac: Repentance」与
+    /// 「…Repentance+」——压平档下后者多出 plus，正好挡住商店里同名
+    /// 近似款（Switch 2 版）排在精确命中前面的情况。
+    static func storeNamesMatch(_ a: String, _ b: String) -> Bool {
+        normalizedStoreName(a, squashed: false) == normalizedStoreName(b, squashed: false)
+            || normalizedStoreName(a, squashed: true) == normalizedStoreName(b, squashed: true)
+    }
+
+    private static func normalizedStoreName(_ name: String, squashed: Bool) -> String {
+        // ™®© 先剥再折叠：免得任何折叠实现把 ™ 展开成 TM 之类的残留
+        var result = name
+        for symbol in ["™", "®", "©"] {
+            result = result.replacingOccurrences(of: symbol, with: "")
+        }
+        result = result.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        if squashed {
+            result = result.replacingOccurrences(of: "+", with: " plus ")
+            result = result.replacingOccurrences(of: "&", with: " and ")
+            return result.filter { $0.isLetter || $0.isNumber }
+        }
+        return result.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     /// 商品页主图提取：首选 __NEXT_DATA__ JSON 里的 schema.org linkedData
