@@ -327,10 +327,10 @@ final class LCGamePrefs {
             format = .binary
             return
         }
-        var fmt: PropertyListSerialization.PropertyListFormat?
+        var fmt: PropertyListSerialization.PropertyListFormat = .binary
         if let dict = (try? PropertyListSerialization.propertyList(from: data, format: &fmt)) as? [String: Any] {
             values = dict
-            format = fmt ?? .binary
+            format = fmt
         }
     }
 
