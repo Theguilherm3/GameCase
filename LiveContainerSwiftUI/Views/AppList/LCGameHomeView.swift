@@ -254,7 +254,8 @@ struct LCGameHomeView: View {
     }
 
     /// 手柄胶囊（对齐 NX 壳语义）：数字 = 当前已连接手柄数（GameController 实时
-    /// 监听连接/断开刷新），点击弹出已连接手柄列表。尺寸与位置沿用原常量，只接行为。
+    /// 监听连接/断开刷新），点击以 sheet 打开手柄页（LCControllersView，复刻 NX 壳
+    /// ControllersView 的结构与视觉）。尺寸与位置沿用原常量，只接行为。
     private func gamepadCapsule(height: CGFloat) -> some View {
         Button {
             controllerListPresented = true
@@ -277,60 +278,9 @@ struct LCGameHomeView: View {
             .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $controllerListPresented) {
-            controllerListContent
+        .sheet(isPresented: $controllerListPresented) {
+            LCControllersView(monitor: controllerMonitor)
         }
-    }
-
-    /// 已连接手柄列表小层：逐个列名称与类型，无手柄时显示「未连接手柄」
-    @ViewBuilder
-    private var controllerListContent: some View {
-        let content = VStack(alignment: .leading, spacing: 14) {
-            Text("已连接手柄")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundColor(.white)
-            if controllerMonitor.controllers.isEmpty {
-                Text("未连接手柄")
-                    .font(.system(size: 14))
-                    .foregroundColor(LCGameTheme.mutedText)
-            } else {
-                ForEach(controllerMonitor.controllers, id: \.self) { controller in
-                    HStack(spacing: 10) {
-                        Image(systemName: "gamecontroller.fill")
-                            .font(.system(size: 18))
-                            .foregroundColor(LCGameTheme.chipIcon)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(controller.vendorName ?? "游戏手柄")
-                                .font(.system(size: 14.5, weight: .semibold))
-                                .foregroundColor(.white)
-                            Text(controllerTypeText(controller))
-                                .font(.system(size: 12.5))
-                                .foregroundColor(LCGameTheme.mutedText)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(22)
-        .frame(minWidth: 250, alignment: .leading)
-        .background(LCGameTheme.pageBackground)
-        .preferredColorScheme(.dark)
-
-        if #available(iOS 16.0, *) {
-            content.presentationDetents([.height(240)])
-        } else {
-            content
-        }
-    }
-
-    private func controllerTypeText(_ controller: GCController) -> String {
-        if controller.extendedGamepad != nil {
-            return "扩展游戏手柄"
-        }
-        if controller.microGamepad != nil {
-            return "微型游戏手柄"
-        }
-        return "游戏手柄"
     }
 
     /// ＋导入菜单：导入 IPA / 导入数据包（现有两条导入实现），外加隐藏游戏恢复入口
@@ -942,7 +892,12 @@ struct LCGameHomeView: View {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        setFocus(app)
+                        // NX 原版横屏没有开始钮：点已聚焦的卡 = 启动，点邻卡只切换聚焦
+                        if isFocused {
+                            onRun(app)
+                        } else {
+                            setFocus(app)
+                        }
                     }
                     .contextMenu {
                         gameContextMenu(for: app)
@@ -960,7 +915,8 @@ struct LCGameHomeView: View {
 
 /// 实时维护已连接手柄列表：初始读 GCController.controllers()，之后靠
 /// 连接/断开通知刷新。启动一次无线发现，让已配对的无线手柄尽早枚举出来。
-private final class LCControllerMonitor: ObservableObject {
+/// 主页手柄胶囊与手柄页（LCControllersView）共用同一实例。
+final class LCControllerMonitor: ObservableObject {
     @Published var controllers: [GCController] = []
 
     private var observers: [NSObjectProtocol] = []
@@ -991,6 +947,7 @@ private final class LCControllerMonitor: ObservableObject {
 struct LCHiddenAppsView: View {
     @EnvironmentObject private var sharedModel: SharedModel
     @EnvironmentObject private var sharedAppSortManager: LCAppSortManager
+    @Environment(\.dismiss) private var dismiss
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
 
     var onRun: (LCAppModel) -> Void
@@ -1084,6 +1041,17 @@ struct LCHiddenAppsView: View {
         .background(LCGameTheme.pageBackground.ignoresSafeArea())
         .navigationTitle("隐藏的游戏")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // 本页以 sheet 呈现（列表层包 NavigationView）：右上给显式关闭钮，
+            // 也可以下滑关掉弹层。放 confirmationAction 位——与数据包导入页
+            // 「取消」的 cancellationAction 正好成对，同为素 Button 无自加样式，
+            // 新系统渲染成与标题同行的圆角胶囊钮。
+            ToolbarItem(placement: .confirmationAction) {
+                Button("关闭") {
+                    dismiss()
+                }
+            }
+        }
         .preferredColorScheme(.dark)
     }
 

@@ -13,11 +13,12 @@ import SwiftUI
 
 struct LCGameSettingsView: View {
     @ObservedObject var app: LCAppModel
+    /// 启动：编排在列表层（先收 sheet、等退场再 runGame），本页只发这一个动作。
     var onRun: () -> Void
     var onOpenDataFolder: () -> Void
-    /// 关闭本页回到游戏库：本页是被列表用隐藏 NavigationLink 推进来的，
-    /// 只能走列表的 closeNavigationView 弹出，presentationMode.dismiss() 对 push 无效。
-    var onClose: () -> Void
+    /// 本页以 sheet 呈现（列表层包 NavigationView 供页内子页推进）：
+    /// 「‹ 游戏库」直接用 dismiss 环境关闭，语义与呈现方式严格匹配。
+    @Environment(\.dismiss) private var dismiss
 
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
 
@@ -62,10 +63,8 @@ struct LCGameSettingsView: View {
                 footerNote
             }
             .padding(.horizontal, 16)
-            // 底部留白 ≥ 浮动底栏胶囊高度 + 间距：即使底栏未隐藏，最后一行也能滚到胶囊上方
-            .padding(.bottom, 110)
+            .padding(.bottom, 40)
         }
-        .hideTabBarOnPush()
         .background(Self.pageBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .navigationBarHidden(true)
@@ -93,7 +92,7 @@ struct LCGameSettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Button {
-                    onClose()
+                    dismiss()
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
