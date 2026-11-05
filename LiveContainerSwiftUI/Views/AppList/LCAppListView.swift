@@ -273,20 +273,11 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
             LCDatapackImportView(request: request, apps: sharedModel.apps + sharedModel.hiddenApps)
         }
         .sheet(item: $gameSettingsItem) { item in
-            // 设置页的「游戏库 / 启动」在页内工具栏（dismiss / 下方 onRun），
+            // 设置页工具栏只有左上角「取消」（dismiss），页内无回库/启动动作；
             // 这里包一层 NavigationView 供工具栏落位与页内子页（按键布局编辑器、高级设置）推进。
             NavigationView {
                 LCGameSettingsView(
                     app: item.app,
-                    onRun: {
-                        // 启动编排归本层：先收 sheet，等弹层退场完成再启动。
-                        // JIT 确认 sheet 与错误弹窗都锚在本层，设置页还盖在上面时
-                        // 它们弹不出来，启动会无声卡住（与隐藏页同一延时模式）。
-                        gameSettingsItem = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                            runGame(app: item.app)
-                        }
-                    },
                     onOpenDataFolder: { openGameDataFolder(app: item.app) }
                 )
             }

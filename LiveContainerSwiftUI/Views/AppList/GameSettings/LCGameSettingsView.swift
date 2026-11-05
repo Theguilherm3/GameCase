@@ -20,11 +20,9 @@ private struct LCCoverCropItem: Identifiable {
 
 struct LCGameSettingsView: View {
     @ObservedObject var app: LCAppModel
-    /// 启动：编排在列表层（先收 sheet、等退场再 runGame），本页只发这一个动作。
-    var onRun: () -> Void
     var onOpenDataFolder: () -> Void
     /// 本页以 sheet 呈现（列表层包 NavigationView 供页内子页推进）：
-    /// 「‹ 游戏库」直接用 dismiss 环境关闭，语义与呈现方式严格匹配。
+    /// 左上角「取消」直接用 dismiss 环境关闭，语义与呈现方式严格匹配。
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
@@ -125,21 +123,14 @@ struct LCGameSettingsView: View {
         .navigationTitle(app.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // 「游戏库」「启动」放工具栏本层（左 cancellationAction / 右
-            // confirmationAction，与数据包页「取消」、容器设置「关闭」同层同机制，
-            // 真机从未失手）。此前两钮自绘在内容区顶部，恰落在被
-            // .navigationBarHidden 藏掉的导航栏保留带内，触摸被导航控制器
-            // 自有层吞掉——三轮点不动都是这个位置问题，不是动作链问题。
+            // 工具栏只留左上角一个「取消」：与数据包导入页的取消同位
+            // （.cancellationAction）同型（素 Button + dismiss），系统渲染为
+            // 标题行左端的胶囊钮。页内不再设回库/启动动作——关闭靠它与下滑，
+            // 启动走主页的开始钮。
             ToolbarItem(placement: .cancellationAction) {
-                Button("游戏库") {
+                Button("lc.common.cancel".loc) {
                     dismiss()
                 }
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                Button("启动") {
-                    onRun()
-                }
-                .disabled(app.isAppRunning)
             }
         }
         .onAppear {
@@ -162,7 +153,7 @@ struct LCGameSettingsView: View {
         }
     }
 
-    // MARK: 头部（封面条 + 标题与副标题；返回/启动已移入工具栏，见 body 的 toolbar）
+    // MARK: 头部（封面条 + 标题与副标题；关闭走工具栏左上角「取消」，见 body 的 toolbar）
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 14) {
