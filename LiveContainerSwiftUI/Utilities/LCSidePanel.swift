@@ -101,7 +101,7 @@ struct LCSidePanelContainer<Content: View>: View {
                     // 压暗层：盖住主页（主页随之不可交互），不透明度随
                     // 拖动量线性变浅（NX 同式 0.55 × (1 − drag/pane)）
                     Color.black
-                        .opacity(0.55 * (1 - min(1, dragOffset / max(pane, 1))))
+                        .opacity(0.55 * (1 - min(CGFloat(1), dragOffset / max(pane, 1))))
                         .ignoresSafeArea()
                         .onTapGesture { onClose() }
                         .gesture(dragGesture(pane: pane))
