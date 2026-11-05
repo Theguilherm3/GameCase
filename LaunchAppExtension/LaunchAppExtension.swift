@@ -81,15 +81,15 @@ struct LaunchAppExtension: AppIntent {
     func perform() async throws -> some IntentResult {
         // sanitize url
         let normalizedLaunchScheme = launchURL.scheme?.lowercased()
-        var isLiveContainerURL = normalizedLaunchScheme == "livecontainer"
-        let preferredScheme = isLiveContainerURL ? nil : (normalizedLaunchScheme == "livecontainer1" ? "livecontainer" : normalizedLaunchScheme)
+        var isLiveContainerURL = normalizedLaunchScheme == "gamecase"
+        let preferredScheme = isLiveContainerURL ? nil : (normalizedLaunchScheme == "gamecase1" ? "gamecase" : normalizedLaunchScheme)
         
         if let preferredScheme, let schemes = LCSharedUtils.lcUnorderedUrlSchemes() {
             isLiveContainerURL = schemes.contains(preferredScheme)
         }
         
         if !isLiveContainerURL && normalizedLaunchScheme != "sidestore" {
-            throw LaunchAppExtensionError("Not a livecontainer URL!")
+            throw LaunchAppExtensionError("Not a gamecase URL!")
         }
         
         guard
@@ -100,15 +100,15 @@ struct LaunchAppExtension: AppIntent {
         }
         
         if normalizedLaunchScheme == "sidestore" {
-            lcSharedDefaults.set("livecontainer", forKey: "LCLaunchExtensionScheme")
+            lcSharedDefaults.set("gamecase", forKey: "LCLaunchExtensionScheme")
             lcSharedDefaults.set("builtinSideStore", forKey: "LCLaunchExtensionBundleID")
             lcSharedDefaults.set(Date.now, forKey: "LCLaunchExtensionLaunchDate")
             try await openURL(launchOptions: ["url": launchURL])
             return .result()
         }
         
-        if launchURL.host != "livecontainer-launch" {
-            throw LaunchAppExtensionError("Not a livecontainer launch URL!")
+        if launchURL.host != "gamecase-launch" {
+            throw LaunchAppExtensionError("Not a gamecase launch URL!")
         }
 
         var bundleId: String? = nil
@@ -189,7 +189,7 @@ struct LaunchAppExtension: AppIntent {
         var allowClassicMode = false
         // if the container is running in a lc, use its scheme, otherwise find free one
         if var runningScheme = LCSharedUtils.getContainerUsingLCScheme(withFolderName: containerName) {
-            if(runningScheme.hasSuffix("liveprocess")) {
+            if(runningScheme.hasSuffix("gamecaseprocess")) {
                 runningScheme = (runningScheme as NSString).deletingPathExtension
             }
             schemeToLaunch = runningScheme
@@ -200,8 +200,8 @@ struct LaunchAppExtension: AppIntent {
                 schemeToLaunch = firstFreeInstalledLC(preferredScheme: preferredScheme)
                 allowClassicMode = schemeToLaunch != nil
             } else {
-                schemeToLaunch = "livecontainer"
-                allowClassicMode = !LCSharedUtils.isLCScheme(inUse: "livecontainer")
+                schemeToLaunch = "gamecase"
+                allowClassicMode = !LCSharedUtils.isLCScheme(inUse: "gamecase")
             }
         }
 

@@ -113,7 +113,7 @@ def update_json_file_release(repo_url, json_file, latest_release):
     news_identifier = f"release-{full_version}"
     date_string = date_obj.strftime("%d/%m/%y")
     news_entry = {
-        "appID": "com.kdt.livecontainer",
+        "appID": "com.tiaoge.gamecase",
         "caption": f"Update of GameCase just got released!",
         "date": latest_release["published_at"],
         "identifier": news_identifier,
@@ -302,7 +302,7 @@ Nightly build from [{commit_sha}](https://github.com/Tiaoge-tou/GameCase/commit/
         news_identifier = f"release-{full_version}"
         date_string = date_obj.strftime("%d/%m/%y")
         news_entry = {
-            "appID": "com.kdt.livecontainer",
+            "appID": "com.tiaoge.gamecase",
             "caption": f"Update of GameCase just got released!",
             "date": latest_release["published_at"],
             "identifier": news_identifier,

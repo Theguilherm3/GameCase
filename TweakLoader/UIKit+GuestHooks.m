@@ -45,7 +45,7 @@ static void UIKitGuestHooksInit() {
 NSString* findDefaultContainerWithBundleId(NSString* bundleId) {
     // find app's default container
     NSString *appGroupPath = [NSUserDefaults lcAppGroupPath];
-    NSString* appGroupFolder = [appGroupPath stringByAppendingPathComponent:@"LiveContainer"];
+    NSString* appGroupFolder = [appGroupPath stringByAppendingPathComponent:@"GameCase"];
     
     NSString* bundleInfoPath = [NSString stringWithFormat:@"%@/Applications/%@/LCAppInfo.plist", appGroupFolder, bundleId];
     NSDictionary* infoDict = [NSDictionary dictionaryWithContentsOfFile:bundleInfoPath];
@@ -105,7 +105,7 @@ void LCShowSwitchAppConfirmation(NSURL *url, NSString* bundleId, bool isSharedAp
 
     NSString *message = [@"lc.guestTweak.appSwitchTip %@" localizeWithFormat:bundleId];
     UIWindow *window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"LiveContainer" message:message preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"GameCase" message:message preferredStyle:UIAlertControllerStyleAlert];
     UIAlertAction* okAction = [UIAlertAction actionWithTitle:@"lc.common.ok".loc style:UIAlertActionStyleDefault handler:^(UIAlertAction * action) {
         [NSUserDefaults.lcUserDefaults setBool:NO forKey:@"LCOpenSideStore"];
         [NSClassFromString(@"LCSharedUtils") launchToGuestAppWithURL:url];
@@ -138,7 +138,7 @@ void LCShowSwitchAppConfirmation(NSURL *url, NSString* bundleId, bool isSharedAp
 
 void LCShowAlert(NSString* message) {
     UIWindow *window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"LiveContainer" message:message preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"GameCase" message:message preferredStyle:UIAlertControllerStyleAlert];
     UIAlertAction* okAction = [UIAlertAction actionWithTitle:@"lc.common.ok".loc style:UIAlertActionStyleDefault handler:^(UIAlertAction * action) {
         window.windowScene = nil;
     }];
@@ -206,7 +206,7 @@ void LCOpenWebPage(NSString* webPageUrlString, NSString* originalUrl) {
     
     NSString *message = @"lc.guestTweak.openWebPageTip".loc;
     UIWindow *window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"LiveContainer" message:message preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"GameCase" message:message preferredStyle:UIAlertControllerStyleAlert];
     UIAlertAction* okAction = [UIAlertAction actionWithTitle:@"lc.common.ok".loc style:UIAlertActionStyleDefault handler:^(UIAlertAction * action) {
         [NSClassFromString(@"LCSharedUtils") setWebPageUrlForNextLaunch:webPageUrlString];
         [NSClassFromString(@"LCSharedUtils") launchToGuestAppWithClassicMode:0];
@@ -249,7 +249,7 @@ void LCOpenSideStoreURL(NSURL* sidestoreUrl) {
     }
     NSString *message = [@"lc.guestTweak.appSwitchTip %@" localizeWithFormat:@"SideStore"];
     UIWindow *window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"LiveContainer" message:message preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"GameCase" message:message preferredStyle:UIAlertControllerStyleAlert];
     UIAlertAction* okAction = [UIAlertAction actionWithTitle:@"lc.common.ok".loc style:UIAlertActionStyleDefault handler:^(UIAlertAction * action) {
         [NSUserDefaults.lcUserDefaults setObject:sidestoreUrl.absoluteString forKey:@"launchAppUrlScheme"];
         [NSUserDefaults.lcUserDefaults setObject:@"builtinSideStore" forKey:@"selected"];
@@ -305,10 +305,10 @@ void handleLiveContainerLaunch(NSString* bundleName, NSString* containerFolderNa
         NSString* runningLC = [NSClassFromString(@"LCSharedUtils") getContainerUsingLCSchemeWithFolderName:containerFolderName];
         // the app is running in an lc, that lc is not me, also is not my avatar
         if(runningLC) {
-            if([runningLC hasSuffix:@"liveprocess"]) {
+            if([runningLC hasSuffix:@"gamecaseprocess"]) {
                 runningLC = runningLC.stringByDeletingPathExtension;
             }
-            NSString* urlStr = [NSString stringWithFormat:@"%@://livecontainer-launch?bundle-name=%@&container-folder-name=%@", runningLC, bundleName, containerFolderName];
+            NSString* urlStr = [NSString stringWithFormat:@"%@://gamecase-launch?bundle-name=%@&container-folder-name=%@", runningLC, bundleName, containerFolderName];
             [UIApplication.sharedApplication openURL:[NSURL URLWithString:urlStr] options:@{} completionHandler:nil];
             return;
         }
@@ -418,7 +418,7 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
     }
 
     // pass through sidestore urls
-    if(NSUserDefaults.isSideStore && ![url.scheme isEqualToString:@"livecontainer"]) {
+    if(NSUserDefaults.isSideStore && ![url.scheme isEqualToString:@"gamecase"]) {
         return LCControlAppURLHandlingPassThrough;
     }
 
@@ -434,11 +434,11 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
     }
     NSString* urlHost = url.host;
     
-    if([urlHost isEqualToString:@"livecontainer-relaunch"]) {
+    if([urlHost isEqualToString:@"gamecase-relaunch"]) {
         return LCControlAppURLHandlingStop;
     }
     
-    if([urlHost isEqualToString:@"livecontainer-launch"]) {
+    if([urlHost isEqualToString:@"gamecase-launch"]) {
         // If it's not current app, then switch, otherwise check if we need to open the url
         NSString* bundleName = nil;
         NSString* openUrl = nil;
@@ -457,7 +457,7 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
         
         // launch to LiveContainerUI
         if([bundleName isEqualToString:@"ui"]) {
-            LCShowSwitchAppConfirmation(url, @"LiveContainer", false);
+            LCShowSwitchAppConfirmation(url, @"GameCase", false);
             return LCControlAppURLHandlingStop;
         }
         
@@ -613,7 +613,7 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
 }
 
 - (void)hook_openURL:(NSURL *)url options:(NSDictionary<NSString *,id> *)options completionHandler:(void (^)(_Bool))completion {
-    if(NSUserDefaults.isSideStore && ![url.scheme isEqualToString:@"livecontainer"]) {
+    if(NSUserDefaults.isSideStore && ![url.scheme isEqualToString:@"gamecase"]) {
         [self hook_openURL:url options:options completionHandler:completion];
         return;
     }
@@ -621,7 +621,7 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
     BOOL openSelf = canAppOpenItself(url);
     BOOL redirectToHost = shouldRedirectOpenURLToHost(url);;
     if(openSelf || redirectToHost) {
-        NSString* schemeToUse = openSelf ? NSUserDefaults.lcAppUrlScheme : @"livecontainer";
+        NSString* schemeToUse = openSelf ? NSUserDefaults.lcAppUrlScheme : @"gamecase";
         NSData *data = [url.absoluteString dataUsingEncoding:NSUTF8StringEncoding];
         NSString *encodedUrl = [data base64EncodedStringWithOptions:0];
         NSString* finalUrlStr = [NSString stringWithFormat:@"%@://open-url?url=%@", schemeToUse, encodedUrl];
@@ -702,7 +702,7 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
     BOOL openSelf = canAppOpenItself(url);
     BOOL redirectToHost = shouldRedirectOpenURLToHost(url);
     if(openSelf || redirectToHost) {
-        NSString* schemeToUse = openSelf ? NSUserDefaults.lcAppUrlScheme : @"livecontainer";
+        NSString* schemeToUse = openSelf ? NSUserDefaults.lcAppUrlScheme : @"gamecase";
         NSData *data = [url.absoluteString dataUsingEncoding:NSUTF8StringEncoding];
         NSString *encodedUrl = [data base64EncodedStringWithOptions:0];
         NSString* finalUrlStr = [NSString stringWithFormat:@"%@://open-url?url=%@", schemeToUse, encodedUrl];

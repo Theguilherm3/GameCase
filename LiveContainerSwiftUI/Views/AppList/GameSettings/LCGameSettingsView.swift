@@ -1038,7 +1038,7 @@ struct LCGameSettingsView: View {
                 LCAppSettingsView(model: app)
             } label: {
                 navRow(label: "容器与高级设置") {
-                    Text("LiveContainer")
+                    Text("GameCase")
                         .font(.system(size: 14.5, weight: .semibold))
                         .foregroundColor(LCNXColor.cream)
                 }
