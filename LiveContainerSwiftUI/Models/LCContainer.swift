@@ -66,6 +66,54 @@ class LCContainer : ObservableObject, Hashable {
         }
     }
     
+    /// 新建容器时的夹名生成器（GameCase 口径）：以游戏显示名为基名，让用户在文件 App 的
+    /// Data/Application 下能直接认出哪个夹是哪款游戏。folderName 一经生成仍由 app 记录
+    /// 持有为唯一真源、路径一律走记录拼装；这里只负责在新建时取一个干净且未被占用的名字。
+    /// 消毒：去掉路径非法字符与控制字符、修剪首尾空白与圆点；消毒后为空回退 bundle id，
+    /// 再为空回退 "Game"。去重范围：两个数据根（本机 Data/Application 与共享组
+    /// Data/Application）下已存在的目录 + 本应用已有容器记录；冲突时追加「 2」「 3」序号。
+    static func generateFolderName(displayName: String?, bundleIdentifier: String?, siblingFolderNames: [String]) -> String {
+        let base = sanitizedFolderBase(displayName, fallback: bundleIdentifier)
+        var taken = Set(siblingFolderNames)
+        for root in [LCPath.dataPath, LCPath.lcGroupDataPath] {
+            if let entries = try? FileManager.default.contentsOfDirectory(atPath: root.path) {
+                taken.formUnion(entries)
+            }
+        }
+        if !taken.contains(base) {
+            return base
+        }
+        var suffix = 2
+        while taken.contains("\(base) \(suffix)") {
+            suffix += 1
+        }
+        return "\(base) \(suffix)"
+    }
+
+    static func sanitizedFolderBase(_ raw: String?, fallback: String?) -> String {
+        func clean(_ value: String?) -> String {
+            guard let value else { return "" }
+            var cleaned = value.unicodeScalars.filter { scalar in
+                !CharacterSet(charactersIn: "/:\\?%*|\"<>").contains(scalar)
+                    && !CharacterSet.controlCharacters.contains(scalar)
+            }.map { Character($0) }
+            // 首尾的空白与圆点在路径里易出问题（尾随圆点/纯圆点名），一并修剪
+            while let first = cleaned.first, first == " " || first == "." { cleaned.removeFirst() }
+            while let last = cleaned.last, last == " " || last == "." { cleaned.removeLast() }
+            var result = String(cleaned)
+            // 路径组件长度保护：UTF-8 不超过 120 字节
+            while result.utf8.count > 120, !result.isEmpty {
+                result.removeLast()
+            }
+            return result
+        }
+        let fromName = clean(raw)
+        if !fromName.isEmpty { return fromName }
+        let fromBundleId = clean(fallback)
+        if !fromBundleId.isEmpty { return fromBundleId }
+        return "Game"
+    }
+
     init(folderName: String, name: String, isShared : Bool, isolateAppGroup: Bool = false, spoofIdentifierForVendor: Bool = false, bookmarkData: Data? = nil, resolvedContainerURL: URL? = nil) {
         self.folderName = folderName
         self.name = name

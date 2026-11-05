@@ -235,7 +235,7 @@ class LCAppModel: ObservableObject, Hashable {
         }
         
         if uiContainers.isEmpty {
-            let newName = NSUUID().uuidString
+            let newName = LCContainer.generateFolderName(displayName: appInfo.displayName(), bundleIdentifier: appInfo.bundleIdentifier(), siblingFolderNames: uiContainers.map(\.folderName))
             let newContainer = LCContainer(folderName: newName, name: newName, isShared: uiIsShared)
             uiContainers.append(newContainer)
             if uiSelectedContainer == nil {
