@@ -1484,12 +1484,50 @@ enum LCGameLibraryInfo {
         return components.first(where: isTitleId)?.uppercased()
     }
 
-    static func bannerImage(for appInfo: LCAppInfo) -> UIImage? {
-        // 优先级：客体 IPA 自带横版封面 → 宿主内置原画 → nil（卡片再退回图标兜底）
-        if let guest = guestLandscapeCover(for: appInfo) {
-            return guest
+    /// 封面来源（设置页封面行显示用，顺序即解析优先级）
+    enum BannerSource {
+        case custom   // 玩家自定义（宿主 Documents/CustomCovers）
+        case guest    // 客体 IPA 自带横版图
+        case bundled  // 宿主内置原画
+        case icon     // 无横版图，卡片退回应用图标兜底
+
+        var displayName: String {
+            switch self {
+            case .custom: return "自定义"
+            case .guest: return "游戏自带"
+            case .bundled: return "内置原画"
+            case .icon: return "应用图标"
+            }
         }
-        return bundledCoverImage(for: appInfo)
+    }
+
+    /// 玩家自定义封面：宿主 Documents/CustomCovers/<bundleId>.jpg，用户显式设置即最高优先
+    static func customCoverImage(for appInfo: LCAppInfo) -> UIImage? {
+        guard let bundleId = appInfo.bundleIdentifier() else {
+            return nil
+        }
+        return LCCustomCoverStore.load(forBundleIdentifier: bundleId)
+    }
+
+    /// 封面解析（单一入口，主页 hero / 网格卡 / 横屏轮播 / 最近游玩 / 设置页共用）：
+    /// 自定义封面 → 客体 IPA 自带横版封面 → 宿主内置原画 → nil（卡片再退回图标兜底）。
+    /// 本链不做图片缓存：每次求值都从磁盘现读现解码，换自定义封面后各处随下一次
+    /// 界面刷新（关设置页、状态变更）即为新图，无需额外失效处理。
+    static func bannerResolution(for appInfo: LCAppInfo) -> (image: UIImage?, source: BannerSource) {
+        if let custom = customCoverImage(for: appInfo) {
+            return (custom, .custom)
+        }
+        if let guest = guestLandscapeCover(for: appInfo) {
+            return (guest, .guest)
+        }
+        if let bundled = bundledCoverImage(for: appInfo) {
+            return (bundled, .bundled)
+        }
+        return (nil, .icon)
+    }
+
+    static func bannerImage(for appInfo: LCAppInfo) -> UIImage? {
+        return bannerResolution(for: appInfo).image
     }
 
     static func defaultContainer(for app: LCAppModel) -> LCContainer? {
