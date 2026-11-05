@@ -1022,9 +1022,11 @@ struct LCGameHomeView: View {
     /// contextMenu 又挂在已变换的视图上，长按预览按布局帧取快照、
     /// 内容被变换推偏裁切。现在缩放直接折进卡的渲染尺寸、落位用
     /// position（布局锚点），每张卡的布局帧即渲染帧：命中形状与
-    /// 渲染形状一致、重叠区按 zIndex 归上层（聚焦卡），菜单再给
-    /// 显式 preview 保证预览就是完整的卡本身。几何常量（卡宽封顶、
-    /// 0.78 步距、0.8 缩放、-0.22 压暗、zIndex 规则）一律未动。
+    /// 渲染形状一致、重叠区按 zIndex 归上层（聚焦卡）；菜单挂的就
+    /// 是这张未变换的卡，系统长按预览按其真实帧取快照、封面完整
+    /// （带 preview 的 contextMenu 写法要 iOS 16、部署目标 15 用不了，
+    /// 本法是其等价替代）。几何常量（卡宽封顶、0.78 步距、0.8 缩放、
+    /// -0.22 压暗、zIndex 规则）一律未动。
     private func landscapeShelf(list: [LCAppModel], metrics: LCLandscapeMetrics, width w: CGFloat) -> some View {
         let card = min(metrics.cover, w / (1 + CGFloat(list.count - 1) * 0.8))
         let chosen = landscapeFocusIndex(in: list)
@@ -1047,8 +1049,6 @@ struct LCGameHomeView: View {
                         }
                         .contextMenu {
                             gameContextMenu(for: app)
-                        } preview: {
-                            landscapeCard(app: app, cardW: renderedW, isFocused: isChosen, transformScale: scale)
                         }
                         .position(
                             x: geo.size.width / 2 + (CGFloat(idx) - CGFloat(list.count - 1) / 2) * card * 0.78,
@@ -1097,6 +1097,14 @@ struct LCGameHomeView: View {
                     let near = max(-1, min(1, place))
                     let far = place > 1 ? place - 1 : place < -1 ? place + 1 : 0
                     landscapeCard(app: app, cardW: cover, isFocused: idx == focusIdx)
+                        // Phase 15 审计：命中走 position 布局落位（见
+                        // landscapeShelf 注释），无 shelf 的误启动病；
+                        // 菜单原挂在旋转 / 缩放之后的视图上、与 shelf
+                        // 的预览病同源，改挂到未变换的卡本体上——
+                        // 系统快照源即卡本身，变换全部留在菜单之外。
+                        .contextMenu {
+                            gameContextMenu(for: app)
+                        }
                         .rotation3DEffect(
                             .degrees(reduceMotion ? 0 : -near * 24),
                             axis: (x: 0, y: 1, z: 0),
@@ -1107,15 +1115,6 @@ struct LCGameHomeView: View {
                         .contentShape(Rectangle())
                         .onTapGesture {
                             carouselTap(app: app, index: idx, list: list, stride: stride)
-                        }
-                        // Phase 15 审计：命中走 position 布局落位（见
-                        // landscapeShelf 注释），无 shelf 的误启动病；
-                        // 但菜单同样挂在已变换（旋转 / 缩放）的视图上，
-                        // 与 shelf 同法给显式 preview 保预览完整。
-                        .contextMenu {
-                            gameContextMenu(for: app)
-                        } preview: {
-                            landscapeCard(app: app, cardW: cover, isFocused: idx == focusIdx)
                         }
                         .position(
                             x: w / 2 + place * stride - near * cover * 0.28 - far * cover * 0.55,
