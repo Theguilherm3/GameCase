@@ -39,7 +39,7 @@ class AppInfoProvider {
         guard let appGroupPath = LCSharedUtils.appGroupPath()?.path else { return nil }
         
         let searchPaths = [
-            "\(appGroupPath)/LiveContainer/Data/Application/\(dataUUID)/LCAppInfo.plist",
+            "\(appGroupPath)/GameCase/Data/Application/\(dataUUID)/LCAppInfo.plist",
             "\(appGroupPath)/Containers/\(dataUUID)/LCAppInfo.plist",
             "\(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? "")/Data/Application/\(dataUUID)/LCAppInfo.plist"
         ]
@@ -64,7 +64,7 @@ class AppInfoProvider {
 
         var searchPaths: [String] = []
         if let appGroupPath = LCSharedUtils.appGroupPath()?.path {
-            searchPaths.append("\(appGroupPath)/LiveContainer/Applications")
+            searchPaths.append("\(appGroupPath)/GameCase/Applications")
         }
         if let docPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path {
             searchPaths.append("\(docPath)/Applications")

@@ -468,7 +468,7 @@ struct LCAppSettingsView: View {
     }
 
     func createFolder() async {
-        let newName = NSUUID().uuidString
+        let newName = LCContainer.generateFolderName(displayName: model.displayName, bundleIdentifier: model.appInfo.bundleIdentifier(), siblingFolderNames: model.uiContainers.map(\.folderName) + sharedModel.appDataFolderNames)
         guard let displayName = await renameFolderInput.open(initVal: newName), displayName != "" else {
             return
         }
