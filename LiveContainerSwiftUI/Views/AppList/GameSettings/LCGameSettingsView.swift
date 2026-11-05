@@ -117,6 +117,13 @@ struct LCGameSettingsView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 40)
+            // 横屏收窄（效仿 NX2Apple 壳设置页 ShellSettingsView 的定宽列：
+            // 内容列 maxWidth 640、外层满宽居中）：封面条、标题、所有分组卡
+            // 一起收进居中列，两侧留黑（页底色）。竖屏屏宽 < 640 时列宽即
+            // 可用宽，排版与原来逐点一致。收的是 sheet 内的内容列，sheet
+            // 本身的呈现尺寸不变。
+            .frame(maxWidth: 640)
+            .frame(maxWidth: .infinity)
         }
         .background(Self.pageBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
@@ -134,14 +141,21 @@ struct LCGameSettingsView: View {
             }
         }
         .onAppear {
+            // 每次进页都按磁盘现状重解析封面与数据包状态（两个计数器被封面条 /
+            // 封面行 / 数据包行读取，bump 即重算），不依赖上一次会话的快照
+            coverRefresh += 1
+            statusRefresh += 1
             loadState()
         }
-        .sheet(item: $datapackRequest) { request in
-            LCDatapackImportView(request: request, apps: [app]) {
-                statusRefresh += 1
-                // 导入可能伴随容器注册变化，关页后整页按磁盘重读（含偏好值）
-                loadState()
-            }
+        // onDismiss 覆盖导入页的全部退出路径：原先刷新只挂在导入视图的
+        // onFinished 上，而它仅由「完成」钮触发——用工具栏「取消」或下滑关页
+        // 时状态行不重算（导入失败 / 取消同理要回到与磁盘一致的状态）。
+        .sheet(item: $datapackRequest, onDismiss: {
+            statusRefresh += 1
+            // 导入可能伴随容器注册变化，关页后整页按磁盘重读（含偏好值）
+            loadState()
+        }) { request in
+            LCDatapackImportView(request: request, apps: [app])
         }
         .confirmationDialog("恢复默认设置？", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("恢复默认", role: .destructive) {

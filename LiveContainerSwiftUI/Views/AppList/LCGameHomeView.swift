@@ -36,8 +36,13 @@ enum LCGameTheme {
 struct LCGameCoverView: View {
     let app: LCAppModel
     let darkModeIcon: Bool
+    /// 库内容刷新令牌（列表层在设置页 / 导入页关闭后 bump）：封面是 body 里
+    /// 现读磁盘算出来的，本视图不观察任何状态，令牌不变 body 就不重跑、
+    /// 换完封面仍显示旧图。令牌作为入参变化即触发重解析。
+    let refreshToken: Int
 
     var body: some View {
+        _ = refreshToken
         if let bannerImage = LCGameLibraryInfo.bannerImage(for: app.appInfo) {
             Image(uiImage: bannerImage)
                 .resizable()
@@ -73,6 +78,8 @@ struct LCGameHomeView: View {
     /// 本视图内部 GeometryReader 带 .ignoresSafeArea()，它读到的
     /// geo.safeAreaInsets 恒为 0，不能直接用作浮钮排的定位依据。
     let safeAreaInsets: EdgeInsets
+    /// 库内容刷新令牌：变化即本视图 body 重跑，封面与数据包状态点按磁盘重算
+    let refreshToken: Int
 
     var onRun: (LCAppModel) -> Void
     var onSettings: (LCAppModel) -> Void
@@ -137,7 +144,9 @@ struct LCGameHomeView: View {
     }
 
     private func datapackReady(_ app: LCAppModel) -> Bool {
-        LCGameLibraryInfo.isDatapackReady(container: LCGameLibraryInfo.defaultContainer(for: app))
+        // 读 refreshToken 把依赖写明：令牌变化时状态点随 body 按磁盘重算
+        _ = refreshToken
+        return LCGameLibraryInfo.isDatapackReady(container: LCGameLibraryInfo.defaultContainer(for: app))
     }
 
     /// 「最近游玩」排序：lastLaunched 倒序，从未启动过的排后面
@@ -479,7 +488,7 @@ struct LCGameHomeView: View {
     private func portraitHero(width: CGFloat, height: CGFloat, safeTop: CGFloat, margin m: CGFloat) -> some View {
         ZStack {
             if let app = focusedApp {
-                LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
+                LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
                     .frame(width: width, height: height)
                     .clipped()
             }
@@ -567,7 +576,7 @@ struct LCGameHomeView: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: spacing), GridItem(.flexible(), spacing: spacing)], spacing: 18) {
                 ForEach(apps, id: \.self) { app in
                     VStack(alignment: .leading, spacing: 8) {
-                        LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
+                        LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
                             .frame(width: columnWidth, height: columnWidth * 9 / 16)
                             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                             .overlay(alignment: .topLeading) {
@@ -609,7 +618,7 @@ struct LCGameHomeView: View {
             ForEach(rows.indices, id: \.self) { idx in
                 let app = rows[idx]
                 HStack(spacing: 12) {
-                    LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
+                    LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
                         .frame(width: 73, height: 41)
                         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                     VStack(alignment: .leading, spacing: 3) {
@@ -735,7 +744,7 @@ struct LCGameHomeView: View {
         return ZStack {
             // 封面色调背景：聚焦封面重模糊 + 压暗（照预览取值）
             if let app = focusedApp {
-                LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
+                LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
                     .frame(width: w, height: h)
                     .clipped()
                     .blur(radius: 30)
@@ -857,7 +866,7 @@ struct LCGameHomeView: View {
                 let app = apps[idx]
                 let isFocused = idx == focusIndex
                 let cardW = isFocused ? focusedW : neighborW
-                LCGameCoverView(app: app, darkModeIcon: darkModeIcon)
+                LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
                     .frame(width: cardW, height: cardW * 9 / 16)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay {
