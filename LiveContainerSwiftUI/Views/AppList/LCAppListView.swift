@@ -70,6 +70,10 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     
     @State private var navigateTo : AnyView?
     @State private var isNavigationActive = false
+
+    // 游戏库换皮：数据包导入提示（Phase 2 才接导入逻辑）与卸载确认
+    @State var datapackHintShow = false
+    @State var appPendingUninstall: LCAppModel? = nil
     
     @State private var helpPresent = false
     
@@ -119,6 +123,49 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     init() {
         _installOptions = State(initialValue: [])
     }
+
+    var uninstallDialogTitle: String {
+        return "卸载 \(appPendingUninstall?.displayName ?? "")？"
+    }
+
+    var uninstallDialogPresented: Binding<Bool> {
+        Binding(
+            get: { appPendingUninstall != nil },
+            set: { presented in
+                if !presented {
+                    appPendingUninstall = nil
+                }
+            }
+        )
+    }
+
+    func gameCard(app: LCAppModel) -> LCGameCardView {
+        LCGameCardView(
+            app: app,
+            onRun: { runGame(app: app) },
+            onOpenDataFolder: { openGameDataFolder(app: app) },
+            onSettings: { openNavigationView(view: AnyView(LCAppSettingsView(model: app))) },
+            onUninstall: { appPendingUninstall = app }
+        )
+    }
+
+    func importButtonLabel(title: String, subtitle: String) -> some View {
+        VStack(spacing: 6) {
+            Text(title)
+                .font(.system(.headline, design: .rounded).bold())
+                .foregroundColor(LCGameCardView.creamColor)
+            Text(subtitle)
+                .font(.footnote)
+                .foregroundColor(.gray)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 18)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [6, 5]))
+                .foregroundColor(Color.white.opacity(0.35))
+        )
+    }
     
     var body: some View {
         NavigationView {
@@ -131,9 +178,9 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 })
                 .hidden()
                 
-                LazyVStack {
+                LazyVStack(spacing: 16) {
                     ForEach(filteredApps, id: \.self) { app in
-                        LCAppBanner(appModel: app, delegate: self)
+                        gameCard(app: app)
                     }
                     .transition(.scale)
                 }
@@ -151,7 +198,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                                 }
                                 
                                 ForEach(filteredHiddenApps, id: \.self) { app in
-                                    LCAppBanner(appModel: app, delegate: self)
+                                    gameCard(app: app)
                                 }
                                 .transition(.scale)
                                 
@@ -174,7 +221,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                             }
                             ForEach(filteredHiddenApps, id: \.self) { app in
                                 if sharedModel.isHiddenAppUnlocked {
-                                    LCAppBanner(appModel: app, delegate: self)
+                                    gameCard(app: app)
                                 } else {
                                     LCAppSkeletonBanner()
                                 }
@@ -198,11 +245,29 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                         }
                 }.animation(searchContext.isTyping ? nil : .easeInOut, value: LCUtils.appGroupUserDefault.bool(forKey: "LCStrictHiding"))
 
+                if sharedModel.multiLCStatus != 2 {
+                    HStack(spacing: 12) {
+                        Button {
+                            choosingIPA = true
+                        } label: {
+                            importButtonLabel(title: "+ 导入 IPA", subtitle: "游戏本体 · 自动签名入库")
+                        }
+                        Button {
+                            datapackHintShow = true
+                        } label: {
+                            importButtonLabel(title: "+ 导入数据包", subtitle: "romfs.img · 选完自动对号")
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                }
+
                 if sharedModel.multiLCStatus == 2 {
                     Text("lc.appList.manageInPrimaryTip".loc).foregroundStyle(.gray).padding()
                 }
 
             }
+            .background(Color(red: 0.055, green: 0.055, blue: 0.059))
             .navigationBarProgressBar(show:$installprogressVisible, progress: $installProgressPercentage)
             .coordinateSpace(name: "scroll")
             .onAppear {
@@ -211,7 +276,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 }
             }
             
-            .navigationTitle("lc.appList.myApps".loc)
+            .navigationTitle("游戏库")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if sharedModel.multiLCStatus != 2 {
@@ -286,6 +351,29 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        .preferredColorScheme(.dark)
+        .alert("导入数据包", isPresented: $datapackHintShow) {
+            Button("lc.common.ok".loc, action: {})
+        } message: {
+            Text("romfs.img 数据包导入将在下一版本提供。")
+        }
+        .confirmationDialog(uninstallDialogTitle, isPresented: uninstallDialogPresented, titleVisibility: .visible) {
+            Button("卸载（保留数据）", role: .destructive) {
+                if let app = appPendingUninstall {
+                    performUninstall(app: app, removeData: false)
+                }
+                appPendingUninstall = nil
+            }
+            Button("卸载并删除数据", role: .destructive) {
+                if let app = appPendingUninstall {
+                    performUninstall(app: app, removeData: true)
+                }
+                appPendingUninstall = nil
+            }
+            Button("lc.common.cancel".loc, role: .cancel) {
+                appPendingUninstall = nil
+            }
+        }
         .alert("lc.common.error".loc, isPresented: $errorShow){
             Button("lc.common.ok".loc, action: {
             })
@@ -977,7 +1065,61 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
             sharedModel.hiddenApps.removeAll { now in
                 return app == now
             }
-            
+
+        }
+    }
+
+    // MARK: 游戏库卡片动作（与横幅 runButtonTapped / 长按菜单同语义，恒串行单开）
+
+    func runGame(app: LCAppModel) {
+        Task {
+            if app.appInfo.isLocked && !sharedModel.isHiddenAppUnlocked {
+                do {
+                    if !(try await LCUtils.authenticateUser()) {
+                        return
+                    }
+                } catch {
+                    errorInfo = error.localizedDescription
+                    errorShow = true
+                    return
+                }
+            }
+            do {
+                try await app.runApp()
+            } catch {
+                errorInfo = error.localizedDescription
+                errorShow = true
+            }
+        }
+    }
+
+    func openGameDataFolder(app: LCAppModel) {
+        guard let folderName = app.uiSelectedContainer?.folderName,
+              let url = URL(string: "shareddocuments://\(LCPath.dataPath.path)/\(folderName)") else {
+            return
+        }
+        UIApplication.shared.open(url)
+    }
+
+    func performUninstall(app: LCAppModel, removeData: Bool) {
+        do {
+            guard let bundlePath = app.appInfo.bundlePath() else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            let fm = FileManager.default
+            try fm.removeItem(atPath: bundlePath)
+            removeApp(app: app)
+            if removeData {
+                for container in app.appInfo.containers {
+                    let dataUUID = container.folderName
+                    try? fm.removeItem(at: LCPath.dataPath.appendingPathComponent(dataUUID))
+                    LCUtils.removeAppKeychain(dataUUID: dataUUID)
+                    sharedModel.appDataFolderNames.removeAll { $0 == dataUUID }
+                }
+            }
+        } catch {
+            errorInfo = error.localizedDescription
+            errorShow = true
         }
     }
     
@@ -1255,4 +1397,208 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
 
 extension View {
     func apply<V: View>(@ViewBuilder _ block: (Self) -> V) -> V { block(self) }
+}
+
+// MARK: - 游戏库封面信息（专用容器换皮）
+
+enum LCGameLibraryInfo {
+    /// 客体包内横幅大图候选文件名。命中即作 16:9 封面；
+    /// Phase 2 预留扩展点：可在此按 bundle id / 游戏 ID 匹配宿主内置或导入的横幅资源。
+    static let bannerCandidateNames = ["LCBanner.jpg", "LCBanner.png", "banner.jpg", "banner.png", "cover.jpg", "cover.png", "keyart.jpg", "keyart.png"]
+
+    static func bannerImage(for appInfo: LCAppInfo) -> UIImage? {
+        guard let bundlePath = appInfo.bundlePath() else {
+            return nil
+        }
+        for name in bannerCandidateNames {
+            let path = (bundlePath as NSString).appendingPathComponent(name)
+            if let image = UIImage(contentsOfFile: path) {
+                return image
+            }
+        }
+        return nil
+    }
+
+    static func defaultContainer(for app: LCAppModel) -> LCContainer? {
+        return app.uiSelectedContainer ?? app.uiContainers.first
+    }
+
+    /// 数据包是否就绪：默认容器 Documents/romfs.img 是否存在
+    static func isDatapackReady(container: LCContainer?) -> Bool {
+        guard let container else {
+            return false
+        }
+        let romfsURL = container.containerURL.appendingPathComponent("Documents/romfs.img")
+        return FileManager.default.fileExists(atPath: romfsURL.path)
+    }
+
+    /// 读默认容器偏好 plist 里的按键皮肤设置并映射为显示名；无皮肤档案的游戏返回 nil（卡上只显示通用信息）
+    static func skinDisplayName(container: LCContainer?, bundleIdentifier: String) -> String? {
+        guard let container else {
+            return nil
+        }
+        let prefsURL = container.containerURL
+            .appendingPathComponent("Library/Preferences")
+            .appendingPathComponent("\(bundleIdentifier).plist")
+        guard let dict = NSDictionary(contentsOf: prefsURL) as? [String: Any] else {
+            return nil
+        }
+        if let raw = dict["launcher.DM_SILK_SKIN"] as? String, let idx = Int(raw) {
+            let names = ["玻璃皮肤", "荆棘皮肤", "角标皮肤", "黑铁皮肤"]
+            if names.indices.contains(idx) {
+                return names[idx]
+            }
+        }
+        if let raw = dict["launcher.DM_HADES_SKIN"] as? String, let idx = Int(raw) {
+            let names = ["玻璃皮肤", "月亮皮肤", "月亮角标"]
+            if names.indices.contains(idx) {
+                return names[idx]
+            }
+        }
+        return nil
+    }
+}
+
+// MARK: - 游戏库封面卡
+
+struct LCGameCardView: View {
+    @ObservedObject var app: LCAppModel
+    var onRun: () -> Void
+    var onOpenDataFolder: () -> Void
+    var onSettings: () -> Void
+    var onUninstall: () -> Void
+
+    @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
+
+    static let creamColor = Color(red: 0.965, green: 0.929, blue: 0.839)
+    private static let cardBackground = Color(red: 0.118, green: 0.118, blue: 0.129)
+    private static let accentColor = Color(red: 0.788, green: 0.373, blue: 0.263)
+
+    private var container: LCContainer? {
+        LCGameLibraryInfo.defaultContainer(for: app)
+    }
+    private var datapackReady: Bool {
+        LCGameLibraryInfo.isDatapackReady(container: container)
+    }
+    private var skinName: String? {
+        LCGameLibraryInfo.skinDisplayName(container: container, bundleIdentifier: app.bundleIdentifier)
+    }
+    private var bannerImage: UIImage? {
+        LCGameLibraryInfo.bannerImage(for: app.appInfo)
+    }
+    private var iconImage: UIImage? {
+        app.appInfo.iconIsDarkIcon(darkModeIcon)
+    }
+
+    private var metaText: String {
+        var parts = [app.version]
+        parts.append(datapackReady ? "数据包已就绪" : "未导入数据包")
+        if let skinName {
+            parts.append(skinName)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            coverView
+                .frame(maxWidth: .infinity)
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .clipped()
+
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(app.displayName)
+                        .font(.system(.title3, design: .rounded).bold())
+                        .foregroundColor(Self.creamColor)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(datapackReady ? Color.green : Color.gray)
+                            .frame(width: 8, height: 8)
+                        Text(metaText)
+                            .font(.footnote)
+                            .foregroundColor(.gray)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                runButton
+            }
+            .padding(14)
+        }
+        .background(Self.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onRun()
+        }
+        .contextMenu {
+            if !app.uiIsShared, app.uiSelectedContainer != nil {
+                Button {
+                    onOpenDataFolder()
+                } label: {
+                    Label("lc.appBanner.openDataFolder".loc, systemImage: "folder")
+                }
+            }
+            Button {
+                onSettings()
+            } label: {
+                Label("lc.tabView.settings".loc, systemImage: "gear")
+            }
+            if !app.uiIsShared {
+                Button(role: .destructive) {
+                    onUninstall()
+                } label: {
+                    Label("lc.appBanner.uninstall".loc, systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var coverView: some View {
+        if let bannerImage {
+            Image(uiImage: bannerImage)
+                .resizable()
+                .scaledToFill()
+        } else if let iconImage {
+            ZStack {
+                Image(uiImage: iconImage)
+                    .resizable()
+                    .scaledToFill()
+                    .blur(radius: 24)
+                    .opacity(0.75)
+                Image(uiImage: iconImage)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(18)
+            }
+        } else {
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+        }
+    }
+
+    private var runButton: some View {
+        Button {
+            onRun()
+        } label: {
+            Group {
+                if app.isSigningInProgress {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Text("启动")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                }
+            }
+            .frame(width: 76, height: 40)
+            .background(Self.accentColor)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(app.isAppRunning)
+    }
 }

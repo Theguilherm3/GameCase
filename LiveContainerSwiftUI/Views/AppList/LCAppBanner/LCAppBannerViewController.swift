@@ -161,18 +161,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             })
         }
 
-        // Multitask Toggle
-        if #available(iOS 16.0, *) {
-            let shouldLaunchInMultitaskMode = model.shouldLaunchInMultitaskMode
-            sectionChildren.append(UIAction(
-                title: shouldLaunchInMultitaskMode ? "lc.appBanner.run".loc : "lc.appBanner.multitask".loc,
-                image: UIImage(systemName: shouldLaunchInMultitaskMode ? "play.fill" : "macwindow.badge.plus")
-            ) { [weak self] _ in
-                Task { [weak self] in
-                    await self?.runApp(multitask: !shouldLaunchInMultitaskMode)
-                }
-            })
-        }
+        // 专用游戏容器：横幅菜单不再提供多任务启动入口（恒串行单开）
 
         let addToHomeScreenMenu = UIMenu(
             title: "lc.appBanner.addToHomeScreen".loc,

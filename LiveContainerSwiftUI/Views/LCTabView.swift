@@ -23,25 +23,13 @@ struct LCTabView: View {
     
     var body: some View {
         TabView(selection: $sharedModel.selectedTab) {
-            if DataManager.shared.model.multiLCStatus != 2 {
-                LCSourcesView()
-                    .tabItem {
-                        Label("lc.tabView.sources".loc, systemImage: "books.vertical")
-                    }
-                    .tag(LCTabIdentifier.sources)
-            }
+            // 专用游戏容器：只保留游戏库与设置两页，源（Sources）与模块（Tweaks）页已摘除，
+            // LCSourcesView / LCTweaksView 文件保留在工程内但不再被底栏引用。
             LCAppListView()
                 .tabItem {
-                    Label("lc.tabView.apps".loc, systemImage: "square.stack.3d.up.fill")
+                    Label("游戏库", systemImage: "square.grid.2x2.fill")
                 }
                 .tag(LCTabIdentifier.apps)
-            if DataManager.shared.model.multiLCStatus != 2 {
-                LCTweaksView()
-                    .tabItem{
-                        Label("lc.tabView.tweaks".loc, systemImage: "wrench.and.screwdriver")
-                    }
-                    .tag(LCTabIdentifier.tweaks)
-            }
             
             LCSettingsView()
                 .tabItem {
@@ -135,7 +123,8 @@ struct LCTabView: View {
             case "certificate":
                 sharedModel.selectedTab = .settings
             case "source":
-                sharedModel.selectedTab = .sources
+                // 源页已摘除，落到游戏库
+                sharedModel.selectedTab = .apps
             default:
                 return
             }
