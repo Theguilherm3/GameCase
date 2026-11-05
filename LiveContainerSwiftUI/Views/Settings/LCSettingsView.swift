@@ -69,17 +69,12 @@ struct LCSettingsView: View {
     @AppStorage("BKNoWatchdogs") var disableLiveProcessWatchdog = false
     
     @EnvironmentObject private var sharedModel : SharedModel
-
-    /// 以 sheet 呈现时由呈现方注入的关闭动作；为 nil 时不显示关闭按钮
-    /// （本视图若被以其它方式呈现，不应凭空多一个无效按钮）
-    var onClose: (() -> Void)? = nil
-
+    
     @State private var isViewAppeared = false
     
     let storeName = LCUtils.getStoreName()
     
-    init(onClose: (() -> Void)? = nil) {
-        self.onClose = onClose
+    init() {
         _certificateDataFound = State(initialValue: LCSharedUtils.certificatePassword() != nil)
         _store = State(initialValue: LCUtils.store())
     }
@@ -373,16 +368,6 @@ struct LCSettingsView: View {
                 }
             }
             .navigationBarTitle("lc.tabView.settings".loc)
-            .toolbar {
-                // sheet 呈现时左上角「关闭」（系统 sheet 惯例位置）；无注入则不显示
-                if let onClose {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("关闭") {
-                            onClose()
-                        }
-                    }
-                }
-            }
             .alert("lc.common.error".loc, isPresented: $errorShow){
             } message: {
                 Text(errorInfo)
