@@ -8,9 +8,14 @@
 //  plist 的 DmPadCustom / DmPadCustomHades，与游戏内编辑器共用一份，下次启动生效。
 //  演示按键的皮肤跟随该游戏的按键皮肤设置：素材从客体包内 dm/<皮肤夹>/<键名>.png
 //  读（DmGamepad 的同一路径规则），读不到就退回带字形的玻璃圆盘。
+//  呈现与舞台（Phase 20）：本页由设置页 fullScreenCover 整屏呈现（不进
+//  sheet / 侧面板的导航栈）；画布是设备横屏长宽比的舞台，按 NX
+//  TouchLayoutEditorView 的公式等比 fit——横屏画布左 + 控制卡右列，
+//  竖屏舞台在前 + 控制卡随后整页滚动。存储语义与已保存值一概未动。
 //
 
 import SwiftUI
+import UIKit
 
 struct LCPadLayoutEditorView: View {
     let game: LCPadLayoutGame
@@ -45,32 +50,43 @@ struct LCPadLayoutEditorView: View {
         ZStack {
             backgroundView
             GeometryReader { geo in
-                if geo.size.width >= 700 {
-                    // 横屏：左画布右面板固定排布；底部多留一段避开浮动底栏胶囊
+                // 舞台 staging（Phase 20，照 NX TouchLayoutEditorView）：
+                // 画布是一块设备横屏长宽比的舞台——键位表坐标公式
+                // （LCPadLayout.rawCentre 的 SKIN_REF_HW 折算）本就按真机
+                // 横屏的宽高比算的，舞台比例一错，键位就不是游戏里的
+                // 样子。原先竖屏拿整幅竖屏 bounds 当画布、横屏在面板里
+                // 更是只剩面板宽，键簇挤团、越界被裁。现舞台在可用空间
+                // 内等比 fit 并居中，键只映射进舞台矩形。
+                let aspect = Self.screenAspect
+                if Self.isWide(geo.size) {
+                    // 横屏（NX 并排式）：画布在左按舞台尺寸落位并垂直
+                    // 居中，控制卡进右侧列、列内可滚动
+                    let column = Self.columnWidth(geo.size.width)
+                    let stage = Self.wideStageSize(available: geo.size, column: column, aspect: aspect)
                     VStack(spacing: 10) {
                         header
-                        HStack(alignment: .top, spacing: 14) {
-                            canvas
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            panel
-                                .frame(width: 330)
+                        HStack(alignment: .top, spacing: 20) {
+                            canvas(stage: stage)
+                                .frame(maxHeight: .infinity)
+                            ScrollView {
+                                panel
+                            }
+                            .frame(width: column)
                         }
                     }
-                    .padding(14)
-                    .padding(.bottom, 76)
+                    .padding(16)
                 } else {
-                    // 竖屏：整页可滚动——上方画布按屏宽等比，下方完整面板全部可达；
-                    // 画布上的按键拖动手势用 highPriorityGesture，不被页面滚动抢走
+                    // 竖屏（NX 滚动流式）：舞台按内容宽等比 fit 在前，
+                    // 控制卡随后、整页可滚动；画布上的按键拖动手势用
+                    // highPriorityGesture，不被页面滚动抢走
+                    let stage = Self.portraitStageSize(available: geo.size, aspect: aspect)
                     ScrollView {
                         VStack(spacing: 10) {
                             header
-                            canvas
-                                .frame(maxWidth: .infinity)
-                                .aspectRatio(16 / 9, contentMode: .fit)
+                            canvas(stage: stage)
                             panel
                         }
-                        .padding(14)
-                        .padding(.bottom, 96)
+                        .padding(16)
                     }
                 }
             }
@@ -131,21 +147,64 @@ struct LCPadLayoutEditorView: View {
         }
     }
 
+    // MARK: 舞台度量（NX TouchLayoutEditorView 同式）
+
+    /// 设备横屏长宽比：键位表坐标的原生空间（引擎在真机横屏上按屏幕
+    /// 比例排键，rawCentre 的折算常数即出自该比例）。与当前朝向无关：
+    /// 竖屏时同一块屏倒过来看，比例不变。
+    private static var screenAspect: CGFloat {
+        let bounds = UIScreen.main.bounds.size
+        return max(bounds.width, bounds.height) / min(bounds.width, bounds.height)
+    }
+
+    /// NX 的宽形态判据：明显横向且宽度够才并排，否则走竖屏滚动流
+    /// （原先 LC 以宽 ≥700 分轨，被面板收窄的横屏会误判成竖屏形态）
+    private static func isWide(_ size: CGSize) -> Bool {
+        size.width > size.height * 1.1 && size.width >= 600
+    }
+
+    /// NX 右列宽：min(340, max(250, 宽×0.34))
+    private static func columnWidth(_ width: CGFloat) -> CGFloat {
+        min(340, max(250, (width * 0.34).rounded()))
+    }
+
+    /// 横屏舞台：宽 = min(可用宽 − 右列 − HStack 间距 20 − 页边距 32,
+    /// (可用高 − 头部与边距约 86) × 比例)，高 = 宽 / 比例（NX 原式
+    /// w = min(W − column − 20 − 32, (H − 24) × aspect) 的同构折算；
+    /// NX 的编辑器头部在右列内、LC 的头部在画布上方整行，故高度项
+    /// 多扣头部一行）。宽不小于 200（NX 同款下限）。
+    private static func wideStageSize(available: CGSize, column: CGFloat, aspect: CGFloat) -> CGSize {
+        let w = max(200, min(available.width - column - 20 - 32,
+                             (available.height - 86) * aspect))
+        return CGSize(width: w, height: w / aspect)
+    }
+
+    /// 竖屏舞台：宽 = 内容宽（页边距 16×2），高 = 宽 / 比例
+    private static func portraitStageSize(available: CGSize, aspect: CGFloat) -> CGSize {
+        let w = max(200, available.width - 32)
+        return CGSize(width: w, height: w / aspect)
+    }
+
     // MARK: 画布
 
-    private var canvas: some View {
-        GeometryReader { geo in
-            let size = geo.size
-            ZStack {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture { selected = nil }
-                stickView(in: size)
-                ForEach(game.keys) { key in
-                    keyView(key, in: size)
-                }
+    /// 画布只认舞台尺寸：键的中心 / 半径 / 拖动钳制全部以舞台矩形为
+    /// 坐标系（centre / clamp 的 in: 即舞台尺寸），渲染位置即命中
+    /// 位置；舞台带 NX 画布同款的底色、圆角与描边，读得出边界。
+    private func canvas(stage: CGSize) -> some View {
+        ZStack {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { selected = nil }
+            stickView(in: stage)
+            ForEach(game.keys) { key in
+                keyView(key, in: stage)
             }
         }
+        .frame(width: stage.width, height: stage.height)
+        .background(Color.black.opacity(0.25))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
     }
 
     private func centre(of name: String, in size: CGSize) -> CGPoint {
