@@ -19,47 +19,6 @@ struct LCDatapackRequest: Identifiable {
 /// 拷贝分块大小（放文件级常量：拷贝在后台线程跑，不能读主 actor 隔离的静态成员）
 private let lcDatapackChunkSize = 4 * 1024 * 1024
 
-/// .img 数据包的专用类型：宿主 Info.plist 以 UTExportedTypeDeclarations 声明
-/// com.kdt.livecontainer.romfs-image（扩展名 img、conformsTo public.data）；
-/// 万一声明未注册到，回落 public.data，选择器另行并列放行 public.data 兜底。
-private let lcRomfsImageType = UTType("com.kdt.livecontainer.romfs-image") ?? .data
-
-/// UIKit 文档选择器的 SwiftUI 封装：asCopy=false 返回 security-scoped URL，
-/// 由调用方的拷贝流程负责 startAccessingSecurityScopedResource。
-private struct LCDocumentPicker: UIViewControllerRepresentable {
-    let contentTypes: [UTType]
-    let onPick: (URL?) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onPick: onPick)
-    }
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: contentTypes, asCopy: false)
-        picker.delegate = context.coordinator
-        picker.allowsMultipleSelection = false
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPick: (URL?) -> Void
-
-        init(onPick: @escaping (URL?) -> Void) {
-            self.onPick = onPick
-        }
-
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            onPick(urls.first)
-        }
-
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            onPick(nil)
-        }
-    }
-}
-
 struct LCDatapackImportView: View {
     let request: LCDatapackRequest
     let apps: [LCAppModel]
@@ -116,21 +75,18 @@ struct LCDatapackImportView: View {
                 target = request.app
             }
         }
-        // 文件选择走 UIKit 文档选择器（与 IPA 导入的 DocModifier 同一条已验证路径）：
-        // SwiftUI fileImporter 先后用 [.data]、[.item] 在真机上都把 .img 置灰选不了。
-        // .img 的类型由宿主 Info.plist 的 UTExportedTypeDeclarations 声明为
-        // com.kdt.livecontainer.romfs-image（conformsTo public.data），选择器按
-        // [声明类型, public.data] 放行、asCopy=false 拿 security-scoped URL，
-        // startCopy 本就走 startAccessingSecurityScopedResource 读取。
-        // 选到后仍由 pickedFile 按扩展名 == img 把关、startCopy 按大小校验。
-        .sheet(isPresented: $pickingFile) {
-            LCDocumentPicker(contentTypes: [lcRomfsImageType, .data]) { url in
-                pickingFile = false
-                if let url {
+        // 允许任意文件：.img 没有注册 UTI，用 [.data] 过滤会在文件选择器里把它置灰选不了
+        // （IPA 能选是因为宿主为 ipa/tipa 声明了专用类型）。选到后仍由 pickedFile 按
+        // 扩展名 == img 把关、startCopy 按大小校验，类型放宽不降低校验强度。
+        .fileImporter(isPresented: $pickingFile, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
                     pickedFile(url)
                 }
+            case .failure(let error):
+                stage = .failed(error.localizedDescription)
             }
-            .ignoresSafeArea()
         }
         .confirmationDialog("已有数据包", isPresented: $confirmOverwrite, titleVisibility: .visible) {
             Button("覆盖现有数据包", role: .destructive) {
