@@ -34,10 +34,35 @@ mv ./tmp/SideStoreSupport.framework Payload/LiveContainer.app/Frameworks
 /usr/libexec/PlistBuddy -c "Add :NSUserActivityTypes:0 string RefreshAllIntent" ./Payload/LiveContainer.app/Info.plist
 /usr/libexec/PlistBuddy -c "Add :NSUserActivityTypes:1 string ViewAppIntent" ./Payload/LiveContainer.app/Info.plist
 
-/usr/libexec/PlistBuddy -c "Add :PreferenceSpecifiers:3:Type string PSToggleSwitchSpecifier" ./Payload/LiveContainer.app/Settings.bundle/Root.plist
-/usr/libexec/PlistBuddy -c "Add :PreferenceSpecifiers:3:Title string Open SideStore" ./Payload/LiveContainer.app/Settings.bundle/Root.plist
-/usr/libexec/PlistBuddy -c "Add :PreferenceSpecifiers:3:Key string LCOpenSideStore" ./Payload/LiveContainer.app/Settings.bundle/Root.plist
-/usr/libexec/PlistBuddy -c "Add :PreferenceSpecifiers:3:DefaultValue bool false" ./Payload/LiveContainer.app/Settings.bundle/Root.plist
+# Add the "Open SideStore" toggle to the settings bundle as ONE complete dict:
+# create the entry first at the append index (2, right after the two built-in
+# specifiers), then add its four keys into that same dict. Writing the keys one
+# by one at an index past the end of the array scatters them across two
+# entries (Type alone in one dict, Title/Key/DefaultValue in a Type-less one),
+# and iOS Settings never renders a specifier without a Type — the toggle
+# simply never appears (this is how the bug shipped in v1.0).
+ROOT_PLIST=./Payload/LiveContainer.app/Settings.bundle/Root.plist
+/usr/libexec/PlistBuddy -c "Add :PreferenceSpecifiers:2 dict" "$ROOT_PLIST" || exit 1
+/usr/libexec/PlistBuddy -c "Add :PreferenceSpecifiers:2:Type string PSToggleSwitchSpecifier" "$ROOT_PLIST" || exit 1
+/usr/libexec/PlistBuddy -c "Add :PreferenceSpecifiers:2:Title string Open SideStore" "$ROOT_PLIST" || exit 1
+/usr/libexec/PlistBuddy -c "Add :PreferenceSpecifiers:2:Key string LCOpenSideStore" "$ROOT_PLIST" || exit 1
+/usr/libexec/PlistBuddy -c "Add :PreferenceSpecifiers:2:DefaultValue bool false" "$ROOT_PLIST" || exit 1
+
+# Verify before packaging: the list must be exactly the two built-in
+# specifiers plus one complete Open SideStore dict (all four keys together),
+# with no extra entry — an orphaned Type-only dict is what shipped broken.
+# Fail the build instead of silently producing a package without the toggle.
+pb_get() { /usr/libexec/PlistBuddy -c "Print $1" "$ROOT_PLIST" 2>/dev/null; }
+ROOT_PLIST_OK=1
+[ "$(pb_get ':PreferenceSpecifiers:0:Title')" = "Wait For Debugger" ] || ROOT_PLIST_OK=0
+[ "$(pb_get ':PreferenceSpecifiers:1:Title')" = "Selected Bundle" ] || ROOT_PLIST_OK=0
+[ "$(pb_get ':PreferenceSpecifiers:2:Type')" = "PSToggleSwitchSpecifier" ] || ROOT_PLIST_OK=0
+[ "$(pb_get ':PreferenceSpecifiers:2:Title')" = "Open SideStore" ] || ROOT_PLIST_OK=0
+[ "$(pb_get ':PreferenceSpecifiers:2:Key')" = "LCOpenSideStore" ] || ROOT_PLIST_OK=0
+[ "$(pb_get ':PreferenceSpecifiers:2:DefaultValue')" = "false" ] || ROOT_PLIST_OK=0
+pb_get ':PreferenceSpecifiers:3' >/dev/null && ROOT_PLIST_OK=0
+[ "$ROOT_PLIST_OK" -eq 1 ] || { echo "ERROR: Settings.bundle Open SideStore specifier is malformed; failing build"; exit 1; }
+echo "Settings.bundle verified: Open SideStore specifier complete, no orphan entries"
 
 # download SideStore
 cd tmp
