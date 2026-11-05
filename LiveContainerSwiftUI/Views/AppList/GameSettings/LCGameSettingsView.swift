@@ -10,6 +10,13 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
+
+/// 裁剪页呈现载荷（fullScreenCover item）
+private struct LCCoverCropItem: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
 
 struct LCGameSettingsView: View {
     @ObservedObject var app: LCAppModel
@@ -32,6 +39,14 @@ struct LCGameSettingsView: View {
     @State private var statusRefresh = 0 // 数据包导入完成后 bump，刷新状态点
     @State private var confirmReset = false
 
+    // 自定义封面流程（选图 → 16:9 裁剪 → 存宿主 Documents/CustomCovers）
+    @State private var coverRefresh = 0 // 换/删自定义封面后 bump，刷新本页封面条与封面行
+    @State private var coverMenuPresented = false
+    @State private var photoPickerPresented = false
+    @State private var filePickerPresented = false
+    @State private var cropItem: LCCoverCropItem?
+    @State private var coverErrorPresented = false
+
     private static let cardBackground = Color(red: 0.118, green: 0.118, blue: 0.129)
     private static let pageBackground = Color(red: 0.055, green: 0.055, blue: 0.059)
 
@@ -47,7 +62,48 @@ struct LCGameSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
+                    .fullScreenCover(item: $cropItem) { item in
+                        NavigationView {
+                            LCCoverCropView(image: item.image) { cropped in
+                                saveCroppedCover(cropped)
+                            }
+                        }
+                    }
                 gameInfoSection
+                    .confirmationDialog("封面图", isPresented: $coverMenuPresented, titleVisibility: .visible) {
+                        Button("从相册选择") { photoPickerPresented = true }
+                        Button("从文件选择") { filePickerPresented = true }
+                        if coverHasCustom {
+                            Button("恢复默认", role: .destructive) { removeCustomCover() }
+                        }
+                        Button("lc.common.cancel".loc, role: .cancel) {}
+                    } message: {
+                        Text("自定义封面只替换游戏库里的显示图，存在本机，不影响游戏本体。")
+                    }
+                    .sheet(isPresented: $photoPickerPresented) {
+                        LCPhotoImagePicker(
+                            onPick: { image in
+                                photoPickerPresented = false
+                                presentCrop(for: image)
+                            },
+                            onFail: {
+                                photoPickerPresented = false
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    coverErrorPresented = true
+                                }
+                            },
+                            onCancel: { photoPickerPresented = false }
+                        )
+                        .ignoresSafeArea()
+                    }
+                    .fileImporter(isPresented: $filePickerPresented, allowedContentTypes: [.image], allowsMultipleSelection: false) { result in
+                        handleCoverFileImport(result)
+                    }
+                    .alert("无法使用这张图片", isPresented: $coverErrorPresented) {
+                        Button("好", role: .cancel) {}
+                    } message: {
+                        Text("所选内容不是有效的图片，或保存失败，请换一张再试。")
+                    }
                 if !hasProfile {
                     noProfileHint
                 } else if prefs == nil {
@@ -125,6 +181,8 @@ struct LCGameSettingsView: View {
 
     @ViewBuilder
     private var coverStrip: some View {
+        // 读 coverRefresh 使换/删自定义封面后本条立即重解（解析链无缓存，现读磁盘）
+        let _ = coverRefresh
         Group {
             if let banner = LCGameLibraryInfo.bannerImage(for: app.appInfo) {
                 Image(uiImage: banner)
@@ -180,6 +238,22 @@ struct LCGameSettingsView: View {
             }
             Divider().background(Color.white.opacity(0.08))
             Button {
+                coverMenuPresented = true
+            } label: {
+                HStack(spacing: 10) {
+                    Text("封面图")
+                        .foregroundColor(.primary)
+                    Spacer()
+                    coverRowThumbnail
+                    Text(coverResolution.source.displayName)
+                        .foregroundColor(.gray)
+                    Image(systemName: "chevron.right")
+                        .font(.footnote)
+                        .foregroundColor(.gray)
+                }
+            }
+            Divider().background(Color.white.opacity(0.08))
+            Button {
                 onOpenDataFolder()
             } label: {
                 HStack {
@@ -194,6 +268,70 @@ struct LCGameSettingsView: View {
                 }
             }
         }
+    }
+
+    // MARK: 自定义封面（来源/缩略图/选图与保存）
+
+    /// 当前封面解析结果（来源 + 图）：读 coverRefresh 使换图后本行立即刷新
+    private var coverResolution: (image: UIImage?, source: LCGameLibraryInfo.BannerSource) {
+        _ = coverRefresh
+        return LCGameLibraryInfo.bannerResolution(for: app.appInfo)
+    }
+
+    private var coverHasCustom: Bool {
+        LCCustomCoverStore.exists(forBundleIdentifier: app.bundleIdentifier)
+    }
+
+    @ViewBuilder
+    private var coverRowThumbnail: some View {
+        Group {
+            if let image = coverResolution.image {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else if let icon = app.appInfo.iconIsDarkIcon(darkModeIcon) {
+                Image(uiImage: icon).resizable().scaledToFill()
+            } else {
+                Rectangle().fill(Color.white.opacity(0.08))
+            }
+        }
+        .frame(width: 44, height: 25)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .clipped()
+    }
+
+    /// 选图器关掉后再呈现裁剪页（错开两个呈现，避免同帧抢呈现失败）
+    private func presentCrop(for image: UIImage) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            cropItem = LCCoverCropItem(image: image)
+        }
+    }
+
+    private func handleCoverFileImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else {
+            return
+        }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer {
+            if scoped { url.stopAccessingSecurityScopedResource() }
+        }
+        guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
+            coverErrorPresented = true
+            return
+        }
+        presentCrop(for: image)
+    }
+
+    private func saveCroppedCover(_ cropped: UIImage) {
+        do {
+            try LCCustomCoverStore.save(cropped, forBundleIdentifier: app.bundleIdentifier)
+            coverRefresh += 1
+        } catch {
+            coverErrorPresented = true
+        }
+    }
+
+    private func removeCustomCover() {
+        LCCustomCoverStore.remove(forBundleIdentifier: app.bundleIdentifier)
+        coverRefresh += 1
     }
 
     // MARK: 档案分组
