@@ -174,8 +174,16 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         )
     }
     
+    /// 游戏列表列定义：横屏（宽>高）两列并排，竖屏单列
+    func gridColumns(for size: CGSize) -> [GridItem] {
+        let columnCount = size.width > size.height ? 2 : 1
+        return Array(repeating: GridItem(.flexible(), spacing: 16), count: columnCount)
+    }
+
     var body: some View {
         NavigationView {
+            GeometryReader { geometry in
+                let gameColumns = gridColumns(for: geometry.size)
             ScrollView {
                 NavigationLink(
                     destination: navigateTo,
@@ -185,7 +193,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 })
                 .hidden()
                 
-                LazyVStack(spacing: 16) {
+                LazyVGrid(columns: gameColumns, spacing: 16) {
                     ForEach(filteredApps, id: \.self) { app in
                         gameCard(app: app)
                     }
@@ -204,11 +212,13 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                                     Spacer()
                                 }
                                 
-                                ForEach(filteredHiddenApps, id: \.self) { app in
-                                    gameCard(app: app)
+                                LazyVGrid(columns: gameColumns, spacing: 16) {
+                                    ForEach(filteredHiddenApps, id: \.self) { app in
+                                        gameCard(app: app)
+                                    }
+                                    .transition(.scale)
                                 }
-                                .transition(.scale)
-                                
+
                             }
                             .padding()
                             .transition(.opacity)
@@ -226,11 +236,13 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                                     .font(.system(.title2).bold())
                                 Spacer()
                             }
-                            ForEach(filteredHiddenApps, id: \.self) { app in
-                                if sharedModel.isHiddenAppUnlocked {
-                                    gameCard(app: app)
-                                } else {
-                                    LCAppSkeletonBanner()
+                            LazyVGrid(columns: gameColumns, spacing: 16) {
+                                ForEach(filteredHiddenApps, id: \.self) { app in
+                                    if sharedModel.isHiddenAppUnlocked {
+                                        gameCard(app: app)
+                                    } else {
+                                        LCAppSkeletonBanner()
+                                    }
                                 }
                             }
                             .animation(.easeInOut, value: sharedModel.isHiddenAppUnlocked)
@@ -355,6 +367,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                         Label("Sort by", systemImage: "line.3.horizontal.decrease.circle")
                     }
                 }
+            }
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
