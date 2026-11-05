@@ -76,7 +76,7 @@ def update_json_file_release(repo_url, json_file, latest_release):
     download_url = None
     size = None
     for asset in assets:
-        if asset["name"] == f"LiveContainer.ipa":
+        if asset["name"] == f"GameCase.ipa":
             download_url = asset["browser_download_url"]
             size = asset["size"]
             break
@@ -177,7 +177,7 @@ This is a nightly release [created automatically with GitHub Actions workflow]({
     download_url = None
     size = None
     for asset in assets:
-        if asset["name"] == f"LiveContainer.ipa":
+        if asset["name"] == f"GameCase.ipa":
             download_url = asset["browser_download_url"]
             size = asset["size"]
             break
@@ -258,7 +258,7 @@ Nightly build from [{commit_sha}](https://github.com/Tiaoge-tou/GameCase/commit/
     download_url = None
     size = None
     for asset in assets:
-        if asset["name"] == f"LiveContainer+SideStore.ipa":
+        if asset["name"] == f"GameCase+SideStore.ipa":
             download_url = asset["browser_download_url"]
             size = asset["size"]
             break

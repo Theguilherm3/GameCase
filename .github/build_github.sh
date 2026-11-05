@@ -10,7 +10,7 @@ mv "$archive_path.xcarchive/Products/Applications" Payload
 mkdir tmp
 mv Payload/LiveContainer.app/Frameworks/SideStoreSupport.framework ./tmp
 
-zip -r "$scheme.ipa" "Payload" -x "._*" -x ".DS_Store" -x "__MACOSX"
+zip -r "GameCase.ipa" "Payload" -x "._*" -x ".DS_Store" -x "__MACOSX"
 
 mv ./tmp/SideStoreSupport.framework Payload/LiveContainer.app/Frameworks
 
@@ -73,4 +73,4 @@ find payloadlc/Payload -type d -name "_CodeSignature" -exec rm -r {} +
 ldid -S.github/sidelc/LiveWidgetExtension_adhoc.xml ./Payload/LiveContainer.app/PlugIns/LiveWidgetExtension.appex/LiveWidgetExtension
 
 # package
-zip -r "$scheme+SideStore.ipa" "Payload" -x "._*" -x ".DS_Store" -x "__MACOSX"
+zip -r "GameCase+SideStore.ipa" "Payload" -x "._*" -x ".DS_Store" -x "__MACOSX"

@@ -20,8 +20,8 @@ jobs:
     outputs:
       scheme: ${{ steps.scheme.outputs.scheme }}
       archive_path: ${{ env.archive_path }}
-      artifact: ${{ env.scheme }}.ipa
-      artifact2: ${{ env.scheme }}+SideStore.ipa
+      artifact: GameCase.ipa
+      artifact2: GameCase+SideStore.ipa
     steps:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -73,14 +73,14 @@ jobs:
       - name: Upload a Build Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.scheme }}.ipa
-          path: ${{ env.scheme }}.ipa
+          name: GameCase.ipa
+          path: GameCase.ipa
       
-      - name: Upload LiveContainer+SideStore
+      - name: Upload GameCase+SideStore
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.scheme }}+SideStore.ipa
-          path: ${{ env.scheme }}+SideStore.ipa
+          name: GameCase+SideStore.ipa
+          path: GameCase+SideStore.ipa
 
   release__nightly:
     name: Nightly Release
