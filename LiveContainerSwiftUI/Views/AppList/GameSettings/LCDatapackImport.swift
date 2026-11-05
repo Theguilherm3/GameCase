@@ -16,6 +16,9 @@ struct LCDatapackRequest: Identifiable {
     let app: LCAppModel? // nil = 从库页按钮进入，先选游戏
 }
 
+/// 拷贝分块大小（放文件级常量：拷贝在后台线程跑，不能读主 actor 隔离的静态成员）
+private let lcDatapackChunkSize = 4 * 1024 * 1024
+
 struct LCDatapackImportView: View {
     let request: LCDatapackRequest
     let apps: [LCAppModel]
@@ -43,7 +46,7 @@ struct LCDatapackImportView: View {
     private final class CancelBox { var cancelled = false }
     @State private var cancelBox = CancelBox()
 
-    private static let chunkSize = 4 * 1024 * 1024
+
 
     var body: some View {
         NavigationView {
@@ -288,7 +291,7 @@ struct LCDatapackImportView: View {
                         await MainActor.run { stage = .ready }
                         return
                     }
-                    let chunk = reader.readData(ofLength: Self.chunkSize)
+                    let chunk = reader.readData(ofLength: lcDatapackChunkSize)
                     if chunk.isEmpty { break }
                     writer.write(chunk)
                     written += Int64(chunk.count)
@@ -351,14 +354,14 @@ struct LCDatapackImportView: View {
         }
     }
 
-    static func fileSize(_ url: URL) -> Int64 {
+    nonisolated static func fileSize(_ url: URL) -> Int64 {
         let values = try? url.resourceValues(forKeys: [.fileSizeKey])
         if let size = values?.fileSize { return Int64(size) }
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
     }
 
-    static func sizeText(_ bytes: Int64) -> String {
+    nonisolated static func sizeText(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
