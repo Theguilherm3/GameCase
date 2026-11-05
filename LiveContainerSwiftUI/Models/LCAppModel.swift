@@ -233,7 +233,8 @@ class LCAppModel: ObservableObject, Hashable {
         let currentDataFolder = containerFolderName ?? uiSelectedContainer?.folderName
         
         let classicMode = appInfo.defaultClassicMode
-        let multitask = classicMode == 0 ? (multitask ?? shouldLaunchInMultitaskMode) : false
+        // 专用游戏容器：强制串行单开，忽略全局/单应用多任务设置，永不以多任务模式启动
+        let multitask = false
         
         if MultitaskManager.isMultitasking() || multitask,
            let currentDataFolder {
