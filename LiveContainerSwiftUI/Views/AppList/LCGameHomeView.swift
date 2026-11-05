@@ -678,7 +678,8 @@ struct LCGameHomeView: View {
                             }
                         }
                         .foregroundColor(Color(red: 18 / 255, green: 18 / 255, blue: 18 / 255))
-                        .frame(maxWidth: .infinity, height: 56)
+                        .frame(height: 56)
+                        .frame(maxWidth: .infinity)
                         .background(LCGameTheme.nxCream)
                         .clipShape(Capsule())
                     }
