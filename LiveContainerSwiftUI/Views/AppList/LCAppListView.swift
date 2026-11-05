@@ -273,20 +273,11 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
             LCDatapackImportView(request: request, apps: sharedModel.apps + sharedModel.hiddenApps)
         }
         .sheet(item: $gameSettingsItem) { item in
-            // 设置页的「游戏库 / 启动」在页内工具栏（dismiss / 下方 onRun），
+            // 设置页工具栏只有左上角「取消」（dismiss），页内无回库/启动动作；
             // 这里包一层 NavigationView 供工具栏落位与页内子页（按键布局编辑器、高级设置）推进。
             NavigationView {
                 LCGameSettingsView(
                     app: item.app,
-                    onRun: {
-                        // 启动编排归本层：先收 sheet，等弹层退场完成再启动。
-                        // JIT 确认 sheet 与错误弹窗都锚在本层，设置页还盖在上面时
-                        // 它们弹不出来，启动会无声卡住（与隐藏页同一延时模式）。
-                        gameSettingsItem = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                            runGame(app: item.app)
-                        }
-                    },
                     onOpenDataFolder: { openGameDataFolder(app: item.app) }
                 )
             }
@@ -1484,12 +1475,50 @@ enum LCGameLibraryInfo {
         return components.first(where: isTitleId)?.uppercased()
     }
 
-    static func bannerImage(for appInfo: LCAppInfo) -> UIImage? {
-        // 优先级：客体 IPA 自带横版封面 → 宿主内置原画 → nil（卡片再退回图标兜底）
-        if let guest = guestLandscapeCover(for: appInfo) {
-            return guest
+    /// 封面来源（设置页封面行显示用，顺序即解析优先级）
+    enum BannerSource {
+        case custom   // 玩家自定义（宿主 Documents/CustomCovers）
+        case guest    // 客体 IPA 自带横版图
+        case bundled  // 宿主内置原画
+        case icon     // 无横版图，卡片退回应用图标兜底
+
+        var displayName: String {
+            switch self {
+            case .custom: return "自定义"
+            case .guest: return "游戏自带"
+            case .bundled: return "内置原画"
+            case .icon: return "应用图标"
+            }
         }
-        return bundledCoverImage(for: appInfo)
+    }
+
+    /// 玩家自定义封面：宿主 Documents/CustomCovers/<bundleId>.jpg，用户显式设置即最高优先
+    static func customCoverImage(for appInfo: LCAppInfo) -> UIImage? {
+        guard let bundleId = appInfo.bundleIdentifier() else {
+            return nil
+        }
+        return LCCustomCoverStore.load(forBundleIdentifier: bundleId)
+    }
+
+    /// 封面解析（单一入口，主页 hero / 网格卡 / 横屏轮播 / 最近游玩 / 设置页共用）：
+    /// 自定义封面 → 客体 IPA 自带横版封面 → 宿主内置原画 → nil（卡片再退回图标兜底）。
+    /// 本链不做图片缓存：每次求值都从磁盘现读现解码，换自定义封面后各处随下一次
+    /// 界面刷新（关设置页、状态变更）即为新图，无需额外失效处理。
+    static func bannerResolution(for appInfo: LCAppInfo) -> (image: UIImage?, source: BannerSource) {
+        if let custom = customCoverImage(for: appInfo) {
+            return (custom, .custom)
+        }
+        if let guest = guestLandscapeCover(for: appInfo) {
+            return (guest, .guest)
+        }
+        if let bundled = bundledCoverImage(for: appInfo) {
+            return (bundled, .bundled)
+        }
+        return (nil, .icon)
+    }
+
+    static func bannerImage(for appInfo: LCAppInfo) -> UIImage? {
+        return bannerResolution(for: appInfo).image
     }
 
     static func defaultContainer(for app: LCAppModel) -> LCContainer? {
