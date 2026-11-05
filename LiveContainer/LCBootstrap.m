@@ -303,6 +303,76 @@ static void LCQBSaveState(NSDictionary *state) {
     [state writeToFile:path atomically:YES];
 }
 
+#pragma mark - 游玩时长（Phase 18，与库侧 LCPlayStats 同一文件格式）
+// 纯容器侧计时：开始戳由库侧 runApp 漏斗写进宿主 Documents/LCPlayStats.plist
+// 的 openSession；本进程（客体）只做两件事——每 60 秒刷一次 lastHeartbeat、
+// 回库时结清本局。路径同 LCQBStatePath 的口径：本进程 standardUserDefaults
+// 已被改指到客体容器，必须用 LC_HOME_PATH 显式拼宿主路径。客体不需要知道
+// 自己是谁：串行单开保证 openSession 至多一个，键里的 bundleId 由库侧写。
+// 闪退/被划掉没结清的局，库主页下次出现时按 lastHeartbeat 补结（±60 秒）。
+
+static NSString *LCPSStatsPath(void) {
+    const char *home = getenv("LC_HOME_PATH");
+    NSString *base = home ? [NSString stringWithUTF8String:home] : NSHomeDirectory();
+    return [base stringByAppendingPathComponent:@"Documents/LCPlayStats.plist"];
+}
+
+static NSMutableDictionary *LCPSLoadRoot(void) {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:LCPSStatsPath()];
+    return dict ? [dict mutableCopy] : nil;
+}
+
+static void LCPSSaveRoot(NSDictionary *root) {
+    NSString *path = LCPSStatsPath();
+    [NSFileManager.defaultManager createDirectoryAtPath:path.stringByDeletingLastPathComponent
+                            withIntermediateDirectories:YES attributes:nil error:nil];
+    [root writeToFile:path atomically:YES];
+}
+
+static NSTimeInterval LCPSClampedDuration(NSTimeInterval duration) {
+    if (duration < 0) return 0;
+    if (duration > 24 * 3600) return 24 * 3600;
+    return duration;
+}
+
+static void LCPSHeartbeat(void) {
+    NSMutableDictionary *root = LCPSLoadRoot();
+    if (!root) return;
+    NSDictionary *open = root[@"openSession"];
+    if (![open isKindOfClass:NSDictionary.class]) return;
+    NSMutableDictionary *session = [open mutableCopy];
+    session[@"lastHeartbeat"] = [NSDate date];
+    root[@"openSession"] = session;
+    LCPSSaveRoot(root);
+}
+
+// 回库结清：时长钳制 [0, 24h] 防时钟跳变；>0 才入账（与库侧补结同一规则）。
+static void LCPSCloseSession(void) {
+    NSMutableDictionary *root = LCPSLoadRoot();
+    if (!root) return;
+    NSDictionary *open = root[@"openSession"];
+    [root removeObjectForKey:@"openSession"];
+    if ([open isKindOfClass:NSDictionary.class]) {
+        NSDate *start = open[@"start"];
+        NSString *bundleId = open[@"bundleId"];
+        NSDate *end = [NSDate date];
+        if ([start isKindOfClass:NSDate.class] && [bundleId isKindOfClass:NSString.class]) {
+            NSTimeInterval duration = LCPSClampedDuration([end timeIntervalSinceDate:start]);
+            if (duration > 0) {
+                NSMutableDictionary *apps = [root[@"apps"] mutableCopy] ?: [NSMutableDictionary dictionary];
+                NSMutableDictionary *entry = [apps[bundleId] mutableCopy] ?: [NSMutableDictionary dictionary];
+                entry[@"totalSeconds"] = @([entry[@"totalSeconds"] doubleValue] + duration);
+                entry[@"lastSessionSeconds"] = @(duration);
+                entry[@"lastPlayedAt"] = end;
+                entry[@"sessionCount"] = @([entry[@"sessionCount"] integerValue] + 1);
+                apps[bundleId] = entry;
+                root[@"apps"] = apps;
+            }
+        }
+    }
+    LCPSSaveRoot(root);
+}
+
 #pragma mark - 图标绘制（与预览稿同构的白色线形图标）
 
 static UIImage *LCQBRenderImage(CGSize size, void (^draw)(void)) {
@@ -1098,6 +1168,9 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
 - (void)returnToLibrary {
     if (_returning) return;
     _returning = YES;
+    // 游玩时长先结清本局再走回库流程：重启后本进程不复存在，拖到库侧
+    // 补结就只能按心跳算（白丢最后一分钟内的时间）。
+    LCPSCloseSession();
     [self invalidateCollapseTimer];
     // returning 标记与吸附状态同文件：库侧冷启动读到后首帧盖黑、淡出时清除
     NSMutableDictionary *state = LCQBLoadState();
@@ -1153,6 +1226,17 @@ static void LCQuickBarInstall(void) {
     lcQuickBarInstallAttempted = YES;
     // 关闭开关（默认装）
     if ([NSUserDefaults.standardUserDefaults boolForKey:@"LCQuickBarDisable"]) return;
+    // 游玩时长心跳（Phase 18）：本函数在跳客体 main 前、进程内直跑路径上
+    // 调用，是客体侧最早的可靠时点——先补一拍（openSession 自此有心跳，
+    // 库侧补结能与「客体没跑起来」区分），之后每 60 秒一拍。NSTimer 挂主
+    // runloop、随客体进程同生共死，正是需要的生命周期（进程没了就没心跳，
+    // 库侧按最后一拍补结）。
+    dispatch_async(dispatch_get_main_queue(), ^{
+        LCPSHeartbeat();
+        [NSTimer scheduledTimerWithTimeInterval:60 repeats:YES block:^(NSTimer *timer) {
+            LCPSHeartbeat();
+        }];
+    });
     LCQuickBarHandler *handler = [LCQuickBarHandler sharedHandler];
     [NSNotificationCenter.defaultCenter addObserver:handler
                                            selector:@selector(sceneDidActivate:)

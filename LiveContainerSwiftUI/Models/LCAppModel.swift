@@ -351,7 +351,14 @@ class LCAppModel: ObservableObject, Hashable {
             UserDefaults.standard.setValue(urlStr, forKey: "launchAppUrlScheme")
         }
         UserDefaults.standard.set(uiSelectedContainer?.folderName, forKey: "selectedContainer")
-        
+
+        // 游玩时长开始戳（Phase 18）：runApp 是所有启动入口（主页开始胶囊 /
+        // 横屏牌组 / 列表菜单 / 深链等）的最深公共漏斗，且此处已越过全部
+        // 早退分支（已运行、多任务窗口已存在、转交其他 LC 副本——那些情形
+        // 要么本局已在计、要么由接手副本在它自己的漏斗打戳），启动派发只剩
+        // 下方 JIT / 经典模式两条路，只在这里打一次不会重复计。
+        LCPlayStats.beginSession(bundleId: bundleIdOverride ?? bundleIdentifier)
+
         var jitNeeded = appInfo.isJITNeeded || appInfo.is32bit
         if let forceJIT {
             jitNeeded = forceJIT
