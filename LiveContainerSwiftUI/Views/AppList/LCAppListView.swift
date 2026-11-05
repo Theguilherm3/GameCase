@@ -71,8 +71,8 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     @State private var navigateTo : AnyView?
     @State private var isNavigationActive = false
 
-    // 游戏库换皮：数据包导入提示（Phase 2 才接导入逻辑）与卸载确认
-    @State var datapackHintShow = false
+    // 游戏库换皮：数据包导入（Phase 2 接通）与卸载确认
+    @State var datapackImportRequest: LCDatapackRequest? = nil
     @State var appPendingUninstall: LCAppModel? = nil
     
     @State private var helpPresent = false
@@ -144,7 +144,14 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
             app: app,
             onRun: { runGame(app: app) },
             onOpenDataFolder: { openGameDataFolder(app: app) },
-            onSettings: { openNavigationView(view: AnyView(LCAppSettingsView(model: app))) },
+            onSettings: {
+                openNavigationView(view: AnyView(LCGameSettingsView(
+                    app: app,
+                    onRun: { runGame(app: app) },
+                    onOpenDataFolder: { openGameDataFolder(app: app) }
+                )))
+            },
+            onImportDatapack: { datapackImportRequest = LCDatapackRequest(app: app) },
             onUninstall: { appPendingUninstall = app }
         )
     }
@@ -253,7 +260,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                             importButtonLabel(title: "+ 导入 IPA", subtitle: "游戏本体 · 自动签名入库")
                         }
                         Button {
-                            datapackHintShow = true
+                            datapackImportRequest = LCDatapackRequest(app: nil)
                         } label: {
                             importButtonLabel(title: "+ 导入数据包", subtitle: "romfs.img · 选完自动对号")
                         }
@@ -352,10 +359,8 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .preferredColorScheme(.dark)
-        .alert("导入数据包", isPresented: $datapackHintShow) {
-            Button("lc.common.ok".loc, action: {})
-        } message: {
-            Text("romfs.img 数据包导入将在下一版本提供。")
+        .sheet(item: $datapackImportRequest) { request in
+            LCDatapackImportView(request: request, apps: sharedModel.apps + sharedModel.hiddenApps)
         }
         .confirmationDialog(uninstallDialogTitle, isPresented: uninstallDialogPresented, titleVisibility: .visible) {
             Button("卸载（保留数据）", role: .destructive) {
@@ -1466,13 +1471,14 @@ struct LCGameCardView: View {
     var onRun: () -> Void
     var onOpenDataFolder: () -> Void
     var onSettings: () -> Void
+    var onImportDatapack: () -> Void
     var onUninstall: () -> Void
 
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
 
     static let creamColor = Color(red: 0.965, green: 0.929, blue: 0.839)
     private static let cardBackground = Color(red: 0.118, green: 0.118, blue: 0.129)
-    private static let accentColor = Color(red: 0.788, green: 0.373, blue: 0.263)
+    static let accentColor = Color(red: 0.788, green: 0.373, blue: 0.263)
 
     private var container: LCContainer? {
         LCGameLibraryInfo.defaultContainer(for: app)
@@ -1544,7 +1550,14 @@ struct LCGameCardView: View {
             Button {
                 onSettings()
             } label: {
-                Label("lc.tabView.settings".loc, systemImage: "gear")
+                Label("游戏设置", systemImage: "gear")
+            }
+            if !app.uiIsShared {
+                Button {
+                    onImportDatapack()
+                } label: {
+                    Label("导入数据包", systemImage: "square.and.arrow.down")
+                }
             }
             if !app.uiIsShared {
                 Button(role: .destructive) {
