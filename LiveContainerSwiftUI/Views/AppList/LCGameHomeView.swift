@@ -114,6 +114,14 @@ struct LCGameHomeView: View {
     @State private var carouselDragging = false
     @State private var carouselSettled = true
     @State private var carouselScrollEpoch = 0
+    // 横屏牌组点击裁决（Phase 16）：手势开始时的聚焦位快照、本次点按的
+    // 消费标记、以及「当前触摸序列是否已写过快照」——见 deckTap 注释。
+    // shelf 没有 carousel 的 settled 机制，用最近一次牌组切换的时刻判
+    // 停稳（deckLastSwitchAt，由 setFocusFromDeck 记录）。
+    @State private var deckTapStartFocus: Int? = nil
+    @State private var deckTapConsumed = false
+    @State private var deckTouchActive = false
+    @State private var deckLastSwitchAt: Date = .distantPast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // MARK: 聚焦与状态推导
@@ -190,6 +198,7 @@ struct LCGameHomeView: View {
     }
 
     private func setFocusFromDeck(_ app: LCAppModel) {
+        deckLastSwitchAt = Date()
         withAnimation(deckAnimation) {
             focusKey = key(of: app)
         }
@@ -1054,9 +1063,7 @@ struct LCGameHomeView: View {
                         .brightness(isChosen ? 0 : -0.22)
                         .contentShape(RoundedRectangle(cornerRadius: renderedW * 0.03, style: .continuous))
                         .onTapGesture {
-                            if isChosen {
-                                onRun(app)
-                            } else {
+                            deckTap(app: app, index: idx, list: list, isSettled: deckSettled) {
                                 setFocusFromDeck(app)
                             }
                         }
@@ -1072,6 +1079,7 @@ struct LCGameHomeView: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .contentShape(Rectangle())
+            .simultaneousGesture(deckTouchWatcher(list: list))
             .simultaneousGesture(
                 DragGesture(minimumDistance: 24)
                     .onEnded { value in
@@ -1140,6 +1148,7 @@ struct LCGameHomeView: View {
         .frame(width: w, height: areaH)
         .contentShape(Rectangle())
         .gesture(carouselDrag(list: list, stride: stride))
+        .simultaneousGesture(deckTouchWatcher(list: list))
         .onAppear {
             carouselOffset = CGFloat(focusIdx) * stride
         }
@@ -1151,21 +1160,67 @@ struct LCGameHomeView: View {
         }
     }
 
-    /// 点邻卡只居中（NX 口径），点已聚焦卡在轮播停稳时才启动（滑动 /
-    /// 吸附动画途中点按不触发，与 NX 的 settled 门槛同义）。
-    private func carouselTap(app: LCAppModel, index idx: Int, list: [LCAppModel], stride: CGFloat) {
-        if idx == landscapeFocusIndex(in: list) {
-            if carouselSettled && !carouselDragging {
-                onRun(app)
+    /// 触摸观察手势（Phase 16）：与牌组自身的滑动 / 点击同时识别，
+    /// 只在每次触摸序列落下时写一次「手势开始时的聚焦位」快照并复位
+    /// 消费标记。裁决只认这张快照，不认裁决时（可能已被切换动画或
+    /// asyncAfter 改过的）当前聚焦。
+    private func deckTouchWatcher(list: [LCAppModel]) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                guard !deckTouchActive else { return }
+                deckTouchActive = true
+                deckTapConsumed = false
+                deckTapStartFocus = landscapeFocusIndex(in: list)
             }
-            return
+            .onEnded { _ in
+                deckTouchActive = false
+            }
+    }
+
+    /// shelf 的停稳判定：距上次牌组切换 ≥ 切换动画时长（0.3）+ 余量，
+    /// 与 carousel 的 0.32 口径对齐（reduceMotion 时动画 0.2，同一
+    /// 阈值仍成立）。
+    private var deckSettled: Bool {
+        Date().timeIntervalSince(deckLastSwitchAt) >= 0.32
+    }
+
+    /// 横屏牌组点击的唯一裁决点（Phase 16，NX 三条逻辑的结构性强制）：
+    /// 滑动切换走既有手势、不经此；点后面的封面只切换；只有点已经
+    /// 停稳在前面的封面才启动。旧实现的两条漏路：① shelf 的
+    /// onTapGesture 闭包捕获的是渲染时算好的 isChosen，裁决数据与
+    /// 裁决时刻脱钩——切换动画途中视图再渲染，闭包会带着新聚焦位
+    /// 重入，手指落下时还是后面的卡、识别完成时已被判成前面的卡；
+    /// ② carousel 的 carouselTap 在裁决时现读聚焦位，邻卡路径又在
+    /// 同一手势里当场改聚焦、settled 0.32s 后由 asyncAfter 翻回，
+    /// 未停稳窗口里的后续识别能赶上新聚焦位 + settled 而误启动。
+    /// 本裁决在触摸落下时冻结聚焦位（deckTouchWatcher 的快照），
+    /// 点击结束时只裁决一次并消费：被点卡 ≠ 开始时聚焦卡 → 只执行
+    /// focusAction（切换），同一次点按绝不二次裁决；被点卡 = 开始时
+    /// 聚焦卡且已停稳 → 启动。快照缺失（观察手势未及写下）时退回
+    /// 现读聚焦位，仅该一次点按回到旧口径。
+    private func deckTap(app: LCAppModel, index idx: Int, list: [LCAppModel], isSettled: Bool, focusAction: () -> Void) {
+        guard !deckTapConsumed else { return }
+        deckTapConsumed = true
+        let startFocus = deckTapStartFocus ?? landscapeFocusIndex(in: list)
+        if idx != startFocus {
+            focusAction()
+        } else if isSettled {
+            onRun(app)
         }
-        beginCarouselScroll()
-        withAnimation(deckAnimation) {
-            carouselOffset = CGFloat(idx) * stride
+    }
+
+    /// 点邻卡只居中、点已聚焦卡在轮播停稳时才启动——裁决统一走
+    /// deckTap（手势开始时的聚焦位 + 一次消费），此处只提供 carousel
+    /// 的切换动作（滚动到该卡 + 落聚焦 + settled 计时）。
+    private func carouselTap(app: LCAppModel, index idx: Int, list: [LCAppModel], stride: CGFloat) {
+        deckTap(app: app, index: idx, list: list, isSettled: carouselSettled && !carouselDragging) {
+            beginCarouselScroll()
+            withAnimation(deckAnimation) {
+                carouselOffset = CGFloat(idx) * stride
+            }
+            setFocusFromDeck(app)
+            finishCarouselScroll(epoch: carouselScrollEpoch)
         }
-        setFocusFromDeck(app)
-        finishCarouselScroll(epoch: carouselScrollEpoch)
     }
 
     private func carouselDrag(list: [LCAppModel], stride: CGFloat) -> some Gesture {

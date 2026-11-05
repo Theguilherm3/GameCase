@@ -23,6 +23,21 @@
 //  若按页自身宽高判横竖，游戏设置页头部会误落竖屏图标头。横屏语义
 //  由呈现形态决定。sheet 呈现（不带此环境）行为与原来逐点一致。
 //
+//  面板内右侧死空（Phase 16）：Phase 14 只退化了列宽，没退化安全区
+//  消费。面板贴在屏幕右缘，窗口的横向 safe inset 是位置性的——面板
+//  区域只压在尾部不安全带上（灵动岛侧 ≈59pt），页内的 NavigationView
+//  内容区与 ScrollView 的自动内容安全区调整便把这 59pt 单侧计入，
+//  叠在内容自己的 padding 之上：真机丝之歌面板内分组卡左距 ≈30、
+//  右距 ≈120。NX2 壳在提交 d38ed0b8（「Landscape panels narrower
+//  again, with even margins」）修过同病：设置类页面的 ScrollView 不
+//  再吃横向 safe inset（.ignoresSafeArea(edges: [.leading,
+//  .trailing])），每游戏页删掉第二次叠加的尾部 inset，边距只由内容
+//  自己的 padding 决定。本容器照此：面板内时整页根层忽略横向安全
+//  区，GeometryReader 量到的就是面板全宽、列按全宽落位，左右边距
+//  对称（各页自己的 padding，面板内按 NX 口径 24）。非面板形态
+//  （竖屏 sheet 横向 inset 本为 0、横屏居中列形态）不加此忽略，
+//  与 Phase 12/14 行为逐点一致。
+//
 
 import SwiftUI
 
@@ -31,6 +46,15 @@ struct LCSettingsColumn<Content: View>: View {
     @Environment(\.lcInSidePanel) private var inSidePanel
 
     var body: some View {
+        if inSidePanel {
+            reader
+                .ignoresSafeArea(edges: [.leading, .trailing])
+        } else {
+            reader
+        }
+    }
+
+    private var reader: some View {
         GeometryReader { geo in
             let isLandscape = inSidePanel || geo.size.width > geo.size.height
             let columnWidth = inSidePanel ? geo.size.width

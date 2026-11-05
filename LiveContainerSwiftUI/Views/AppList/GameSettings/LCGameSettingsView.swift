@@ -27,6 +27,9 @@ struct LCGameSettingsView: View {
     /// 页内子页推进），与原来一致。
     var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    /// 横屏侧面板内标记（面板容器注入）：面板内边距按 NX 口径 24，
+    /// 其余形态沿用本页既有 16（见 body 内容列的 padding）
+    @Environment(\.lcInSidePanel) private var inSidePanel
 
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
 
@@ -125,7 +128,10 @@ struct LCGameSettingsView: View {
                 advancedSection
                 footerNote
             }
-            .padding(.horizontal, 16)
+            // 横向边距只由这一处 padding 决定（横向 safe inset 的处理
+            // 见 LCSettingsColumn 的 Phase 16 注释）：面板内按 NX 面板
+            // 口径 24，其余形态 16（本页原值）
+            .padding(.horizontal, inSidePanel ? 24 : 16)
             .padding(.bottom, 40)
             // 展开到 ScrollView 视口全宽（横屏即 640 列、竖屏即屏宽）；
             // 定宽本身由外层 LCSettingsColumn 给 ScrollView 本体，内容层
@@ -135,8 +141,9 @@ struct LCGameSettingsView: View {
         }
         .background(Self.pageBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
-        .navigationTitle(app.displayName)
-        .navigationBarTitleDisplayMode(.inline)
+        // 工具栏不设标题（Phase 16D）：页内头部已有游戏名大标题，工具栏
+        // 再挂内联标题是两处重复——只留左上「取消」。sheet 与侧面板
+        // 共用本 body，两形态一并生效。
         .toolbar {
             // 工具栏只留左上角一个「取消」：与数据包导入页的取消同位
             // （.cancellationAction）同型（素 Button + dismiss），系统渲染为
@@ -203,10 +210,18 @@ struct LCGameSettingsView: View {
         }
     }
 
-    /// 头部图标：游戏的桌面图标原图（与主页图标同源），按系统图标规格处理：
-    /// 图标源图是方角的，圆角必须硬裁在图像本体上（旧写法把 clipShape 挂在
-    /// 外层 Group/帧上，真机四角露出源图白边）；裁后再叠一圈内描边发丝线
-    /// （white 0.12，系统设置页图标同款）兜住抗锯齿边缘，深色底上四角无白点。
+    /// 头部图标：游戏的桌面图标原图（与主页图标同源），62pt、圆角 14。
+    /// 白边归因（Phase 16，用户 17:28 真机放大图为据）：亮边严格沿圆角
+    /// 边框走、宽度均匀、下缘与右下角最亮，而图标 artwork 本身四角是
+    /// 深色——不是源图方角漏出（Phase 14 的第一版判断）。主因是上一版
+    /// 叠的那圈白色 strokeBorder（0.12）本身：它就是沿圆角画的一圈
+    /// 白线，深色页底上处处可见，图标下半 artwork 偏亮更把它衬亮；
+    /// 次因是素材边缘可能带的重采样亮边 / 垫色。本版改法：① 描边换
+    /// 黑色低透明（只压边、不提亮）；② 图像过扫填充——内容放大
+    /// 1.08 倍再硬裁到 62pt 圆角，素材自带的边缘垫色落在裁剪之外。
+    /// 本组件是本页私有实现、非共享组件；仓内其他图标渲染（共享的
+    /// IconImageView、数据包导入页 gameIcon、隐藏游戏页 iconView）
+    /// 都是纯裁剪、无白色描边叠方角图标的组合，无此病，未动。
     private var appIconHeader: some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         return Group {
@@ -215,6 +230,7 @@ struct LCGameSettingsView: View {
                     .resizable()
                     .scaledToFill()
                     .frame(width: 62, height: 62)
+                    .scaleEffect(1.08)
                     .clipShape(shape)
             } else {
                 Rectangle().fill(Color.white.opacity(0.06))
@@ -223,7 +239,7 @@ struct LCGameSettingsView: View {
             }
         }
         .overlay {
-            shape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+            shape.strokeBorder(Color.black.opacity(0.2), lineWidth: 1)
         }
     }
 
