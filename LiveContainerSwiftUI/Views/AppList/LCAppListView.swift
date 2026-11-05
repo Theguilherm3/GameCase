@@ -211,6 +211,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                         onOpenContainerSettings: { containerSettingsPresented = true }
                     )
                 }
+            }
             .navigationBarHidden(true)
             .navigationBarProgressBar(show: $installprogressVisible, progress: $installProgressPercentage)
             .onAppear {
