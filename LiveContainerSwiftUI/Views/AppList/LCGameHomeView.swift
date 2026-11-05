@@ -96,6 +96,9 @@ struct LCGameHomeView: View {
     var onOpenContainerSettings: () -> Void
 
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
+    /// 游玩时长快照（Phase 18）：磁盘现读，本视图不观察统计文件，靠出现 /
+    /// 刷新令牌两个时点重读（见 body 的 onAppear / onChange）。
+    @State private var playStats: [String: LCPlayStats.Entry] = [:]
     @State private var focusKey: String?
     @StateObject private var controllerMonitor = LCControllerMonitor()
     @State private var controllerListPresented = false
@@ -295,6 +298,14 @@ struct LCGameHomeView: View {
         .onAppear {
             ensureFocus()
             landscapeOrderKeys = apps.map { key(of: $0) }
+            // 游玩时长补结（Phase 18）：主页出现 = 此刻没有客体在本进程跑，
+            // 统计文件里还挂着的 openSession 必是闪退/被划掉没结清的局，
+            // 按心跳补结后再读快照（回库路径已由客体侧结清，这里是空转）。
+            LCPlayStats.reconcileOpenSession()
+            playStats = LCPlayStats.allEntries()
+        }
+        .onChange(of: refreshToken) { _ in
+            playStats = LCPlayStats.allEntries()
         }
         .onChange(of: apps.map { key(of: $0) }) { _ in
             ensureFocus()
@@ -715,6 +726,14 @@ struct LCGameHomeView: View {
                             .foregroundColor(.white)
                             .lineLimit(1)
                         recentSubtitle(for: app)
+                        // 游玩时长行（Phase 18，用户指定只上「最近游玩」）：
+                        // 有累计记录才出，文案如「累计 2 小时 5 分钟 · 上次 32 分钟」
+                        if let statsText = LCPlayStats.summaryText(for: playStats[app.bundleIdentifier]) {
+                            Text(statsText)
+                                .font(.system(size: 12.5))
+                                .foregroundColor(LCGameTheme.mutedText)
+                                .lineLimit(1)
+                        }
                     }
                     Spacer()
                     Button {
