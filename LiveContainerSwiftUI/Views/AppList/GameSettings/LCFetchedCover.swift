@@ -96,7 +96,8 @@ enum LCFetchedCoverStore {
 
 // MARK: - 抓取服务（去重入口：导入预抓与展示懒抓共用）
 
-final class LCCoverFetchService {
+/// 内部可变状态（inFlight / waiters）全部由 NSLock 守护，故声明 @unchecked Sendable
+final class LCCoverFetchService: @unchecked Sendable {
     static let shared = LCCoverFetchService()
 
     /// 任一抓取成功后的全局回调：由 LCAppListView 注册，内部 bump 既有
@@ -182,13 +183,7 @@ final class LCCoverFetchService {
             if let image {
                 saved = (try? LCFetchedCoverStore.save(image, forBundleIdentifier: bundleIdentifier)) != nil
             }
-            if !saved {
-                self.recordNegativeAttempt(for: bundleIdentifier)
-            }
-            self.lock.lock()
-            self.inFlight.remove(bundleIdentifier)
-            let callbacks = self.waiters.removeValue(forKey: bundleIdentifier) ?? []
-            self.lock.unlock()
+            let callbacks = self.completeFetch(bundleIdentifier: bundleIdentifier, saved: saved)
             guard saved else {
                 return
             }
@@ -197,6 +192,19 @@ final class LCCoverFetchService {
                 self.onCoverUpdated?()
             }
         }
+    }
+
+    /// 抓取收尾（同步方法）：失败记负缓存，账本（inFlight / waiters）的
+    /// 增删都在锁内完成——NSLock 不可直接用于 async 上下文，故收口在此。
+    private func completeFetch(bundleIdentifier: String, saved: Bool) -> [() -> Void] {
+        if !saved {
+            recordNegativeAttempt(for: bundleIdentifier)
+        }
+        lock.lock()
+        inFlight.remove(bundleIdentifier)
+        let callbacks = waiters.removeValue(forKey: bundleIdentifier) ?? []
+        lock.unlock()
+        return callbacks
     }
 
     /// 导入完成时的预抓（无单独回调，成功后走全局 onCoverUpdated 刷新库）
