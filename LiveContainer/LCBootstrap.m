@@ -275,9 +275,9 @@ typedef NS_ENUM(NSInteger, LCQBDirection) {
     LCQBDirectionDown,
 };
 
-// 横舌全尺寸 44（厚）×76（长）pt、约 41% 半藏（露出 26pt）；展开胶囊高 46pt、离上边 12pt。
+// 横舌全尺寸 44（厚）×60（长）pt、约 41% 半藏（露出 26pt）；展开胶囊高 46pt、离上边 12pt。
 static const CGFloat LCQBTongueThickness = 44;
-static const CGFloat LCQBTongueLength = 76;
+static const CGFloat LCQBTongueLength = 60;
 static const CGFloat LCQBTongueVisible = 26;
 static const CGFloat LCQBBarHeight = 46;
 static const CGFloat LCQBBarGap = 12;
@@ -382,9 +382,9 @@ static UIImage *LCQBRenderImage(CGSize size, void (^draw)(void)) {
     }];
 }
 
-// 六点握把：竖向 2 列 × 3 行，横向 3 列 × 2 行
+// 六点握把：竖向 2 列 × 3 行，横向 3 列 × 2 行（横向款用于吸附舌，13×9）
 static UIImage *LCQBGripImage(BOOL vertical) {
-    CGSize size = vertical ? CGSizeMake(11, 17) : CGSizeMake(17, 11);
+    CGSize size = vertical ? CGSizeMake(11, 17) : CGSizeMake(13, 9);
     return LCQBRenderImage(size, ^{
         [[UIColor colorWithWhite:1 alpha:0.55] setFill];
         CGFloat vCols[2] = {0.27, 0.73};
@@ -406,7 +406,7 @@ static UIImage *LCQBGripImage(BOOL vertical) {
 }
 
 static UIImage *LCQBGamepadImage(void) {
-    CGSize size = CGSizeMake(18, 18);
+    CGSize size = CGSizeMake(16, 16);
     return LCQBRenderImage(size, ^{
         CGFloat w = size.width, h = size.height;
         UIColor *ink = [UIColor colorWithWhite:1 alpha:0.92];
@@ -494,17 +494,20 @@ static UIImage *LCQBHouseImage(CGFloat side, CGFloat alpha, CGFloat lineWidth) {
 }
 
 #pragma mark - 触摸视图（轻点/拖动判别，与游戏触摸共存）
-// 手工跟踪触摸：累计位移超过 8pt 才算拖动（此前不挪位置），轻点走 onTap。
-// 拖动用增量位移回调。坐标必须取固定坐标系（locationInView:nil = 窗口基准
-// 坐标，不随我们自己的浮层窗口移动）：旧实现取 locationInView:self，而触摸
-// 视图就装在被拖动的窗口/栏里——每挪一帧，下一事件的报点基准就被自己的
-// 移动污染一次，增量在真位移上叠加来回误差，肉眼即「跟手但抖」。改到固定
-// 系后增量只含手指的真实位移。
+// 手工跟踪触摸：累计位移超过 8pt 才算拖动（此前不挪位置），轻点走 onTapAt。
+// 拖动用绝对锚定：越过阈值那一刻记下锚点（触摸点 + 由处理器记起始帧），
+// 之后每事件把当前触摸点原样回调，处理器以「起始帧 + 当前点 − 锚点」一次
+// 算定新帧。不再逐事件累加增量——增量法曾用 locationInView:nil 取点，而
+// nil 系是触摸所属窗口（正是被拖的浮层窗自己）的坐标系：窗口每挪一帧，
+// 下一事件的报点基准被自己的移动反向污染一次，增量交替吃半，肉眼即步进
+// 与末端细颤。测点统一换算到场景坐标空间（锚定显示器、恒定），锚定法下
+// 测点误差也只影响当帧、不累积。
 
 @interface LCQBTouchView : UIView
-@property (nonatomic, copy, nullable) void (^onTap)(void);
+@property (nonatomic, copy, nullable) void (^onTapAt)(CGPoint point);
 @property (nonatomic, copy, nullable) void (^onTouchBegan)(void);
-@property (nonatomic, copy, nullable) void (^onDragDelta)(CGPoint delta);
+@property (nonatomic, copy, nullable) void (^onDragStart)(CGPoint anchorPoint);
+@property (nonatomic, copy, nullable) void (^onDragTo)(CGPoint point);
 @property (nonatomic, copy, nullable) void (^onDragEnded)(void);
 @end
 
@@ -514,27 +517,45 @@ static UIImage *LCQBHouseImage(CGFloat side, CGFloat alpha, CGFloat lineWidth) {
     BOOL _dragging;
 }
 
+// 固定测点：把触摸点换算到场景坐标空间。locationInView:nil 给的是触摸所属
+// 窗口的坐标，随浮层窗移动而漂移，不能用作拖动基准。
+- (CGPoint)fixedPointForTouch:(UITouch *)touch {
+    CGPoint p = [touch locationInView:nil];
+    UIWindowScene *scene = self.window.windowScene;
+    if (scene && touch.window) {
+        p = [scene.coordinateSpace convertPoint:p fromCoordinateSpace:touch.window.coordinateSpace];
+    }
+    return p;
+}
+
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    _lastPoint = [touches.anyObject locationInView:nil];
+    _lastPoint = [self fixedPointForTouch:touches.anyObject];
     _travel = 0;
     _dragging = NO;
     if (self.onTouchBegan) self.onTouchBegan();
 }
 
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    CGPoint p = [touches.anyObject locationInView:nil];
-    CGPoint delta = CGPointMake(p.x - _lastPoint.x, p.y - _lastPoint.y);
-    _lastPoint = p;
-    _travel += fabs(delta.x) + fabs(delta.y);
-    if (!_dragging && _travel > 8) _dragging = YES;
-    if (_dragging && self.onDragDelta) self.onDragDelta(delta);
+    CGPoint p = [self fixedPointForTouch:touches.anyObject];
+    if (!_dragging) {
+        _travel += fabs(p.x - _lastPoint.x) + fabs(p.y - _lastPoint.y);
+        _lastPoint = p;
+        if (_travel > 8) {
+            _dragging = YES;
+            // 锚点取越过阈值的当前点：阈值内的位移不计入拖动，无跳变无滞后
+            if (self.onDragStart) self.onDragStart(p);
+        }
+        return;
+    }
+    if (self.onDragTo) self.onDragTo(p);
 }
 
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if (_dragging) {
         if (self.onDragEnded) self.onDragEnded();
-    } else if (self.onTap) {
-        self.onTap();
+    } else if (self.onTapAt) {
+        // 轻点位置取视图自身坐标（当刻静止、无自参照问题），供处理器分发
+        self.onTapAt([touches.anyObject locationInView:self]);
     }
     _dragging = NO;
 }
@@ -636,6 +657,7 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     UIView *_barGlass;
     UIView *_barContent;
     LCQBTouchView *_barTouch;
+    UIButton *_pillButton;
     UIButton *_collapseButton;
     CGFloat _barWidth;
 
@@ -647,6 +669,10 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     BOOL _returning;
     BOOL _dragging;
     BOOL _animating;
+    BOOL _relayoutPending; // 拖动/动画期间被守卫挡下的转屏重排，空闲后补跑一次
+    CGPoint _dragAnchorPoint; // 拖动锚点（场景坐标），与 _dragStartFrame 成对
+    CGRect _dragStartFrame;
+    BOOL _dragAnchored;
 }
 
 + (instancetype)sharedHandler {
@@ -783,11 +809,31 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
 
 - (void)relayoutIfScreenSizeChanged {
     if (!_window || !_scene) return;
+    // 拖动/动画期间不许整帧重排：重排按已持久化的旧 _ratio 把窗口写回吸附位，
+    // 与手势直写形成双写者拉锯（录屏里的水平回弹、竖直弹回、宽度自变皆源于
+    // 此）。与 healLayoutIfNeeded 同口径让行，但不丢弃：记待办，拖动/动画
+    // 结束后由 flushPendingRelayoutIfNeeded 补跑，转屏跟随不回退。
+    if (_dragging || _animating) {
+        _relayoutPending = YES;
+        return;
+    }
+    [self performRelayoutIfScreenSizeChanged];
+}
+
+- (void)performRelayoutIfScreenSizeChanged {
     [self observeSceneWindows]; // 顺带补上旋转后/迟建的客体窗口
     CGRect bounds = _scene.coordinateSpace.bounds;
     if (bounds.size.width <= 0 || bounds.size.height <= 0) return;
     if (CGSizeEqualToSize(bounds.size, _laidOutSize)) return;
     [self layoutForBounds:bounds];
+}
+
+// 补跑被守卫挡下的重排：调用点为拖动收尾（轻点/真拖动）与展开/收起动画完成，
+// 彼时 _dragging/_animating 均已清零；重排内部仍会按尺寸判等，尺寸没变即空转。
+- (void)flushPendingRelayoutIfNeeded {
+    if (!_relayoutPending) return;
+    _relayoutPending = NO;
+    [self relayoutIfScreenSizeChanged];
 }
 
 // 自愈校正：不预设失效形态，按当前 scene bounds 现算上边吸附/展开几何，与
@@ -825,8 +871,9 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     _tongueContent = tongueContent;
     LCQBTouchView *tongueTouch = [[LCQBTouchView alloc] init];
     tongueTouch.onTouchBegan = ^{ [weakSelf dragDidBegin]; };
-    tongueTouch.onTap = ^{ [weakSelf dragDidEnd]; [weakSelf expand]; };
-    tongueTouch.onDragDelta = ^(CGPoint delta) { [weakSelf dragWindowBy:delta]; };
+    tongueTouch.onTapAt = ^(CGPoint point) { [weakSelf dragDidEnd]; [weakSelf expand]; };
+    tongueTouch.onDragStart = ^(CGPoint point) { [weakSelf dragAnchorStartAtPoint:point forBar:NO]; };
+    tongueTouch.onDragTo = ^(CGPoint point) { [weakSelf dragAnchoredToPoint:point forBar:NO]; };
     tongueTouch.onDragEnded = ^{ [weakSelf finishDragFromTongue]; };
     [_tongueContent addSubview:tongueTouch];
     _tongueTouch = tongueTouch;
@@ -837,55 +884,53 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     [_tongueContent addSubview:_gamepadView];
     [_tongueContent addSubview:_chevronView];
 
-    // 展开栏：横向胶囊，横排常量与预览稿一致（pt）
+    // 展开栏：横向胶囊，B 档收窄（183→143）——删纯装饰的握把+分隔线整段，
+    // 胶囊左距 12、内边距 9/10、房子图标 17；收起钮视觉 28、命中域 44×46。
+    // 触摸层盖在整栏最上层：栏身任意处可拖；轻点由处理器按落点分发到
+    // 胶囊（回库）/收起钮（收起），两钮只作视觉、不拦截触摸。
     UIView *barContent = nil;
     _barGlass = LCQBMakeGlass(LCQBBarHeight / 2, &barContent);
     _barGlass.hidden = YES;
     _barContent = barContent;
     LCQBTouchView *barTouch = [[LCQBTouchView alloc] init];
     barTouch.onTouchBegan = ^{ [weakSelf dragDidBegin]; [weakSelf resetCollapseTimer]; };
-    barTouch.onTap = ^{ [weakSelf dragDidEnd]; [weakSelf resetCollapseTimer]; };
-    barTouch.onDragDelta = ^(CGPoint delta) { [weakSelf dragBarBy:delta]; };
+    barTouch.onTapAt = ^(CGPoint point) { [weakSelf barTapAtPoint:point]; };
+    barTouch.onDragStart = ^(CGPoint point) { [weakSelf dragAnchorStartAtPoint:point forBar:YES]; };
+    barTouch.onDragTo = ^(CGPoint point) { [weakSelf dragAnchoredToPoint:point forBar:YES]; };
     barTouch.onDragEnded = ^{ [weakSelf finishDragFromBar]; };
-    [_barContent addSubview:barTouch];
     _barTouch = barTouch;
-
-    UIImageView *barGrip = [[UIImageView alloc] initWithImage:LCQBGripImage(YES)];
-    barGrip.frame = CGRectMake(13, (LCQBBarHeight - 17) / 2, 11, 17);
-    [_barContent addSubview:barGrip];
-    UIView *separator = [[UIView alloc] initWithFrame:CGRectMake(34, (LCQBBarHeight - 22) / 2, 1, 22)];
-    separator.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16];
-    [_barContent addSubview:separator];
 
     UIFont *labelFont = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
     CGFloat textWidth = ceil([@"游戏库" sizeWithAttributes:@{NSFontAttributeName: labelFont}].width);
-    CGFloat pillWidth = 11 + 19 + 8 + textWidth + 13;
+    CGFloat pillWidth = 9 + 17 + 6 + textWidth + 10;
     UIButton *pill = [UIButton buttonWithType:UIButtonTypeCustom];
-    pill.frame = CGRectMake(45, (LCQBBarHeight - 32) / 2, pillWidth, 32);
+    pill.frame = CGRectMake(12, (LCQBBarHeight - 32) / 2, pillWidth, 32);
     pill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.13];
     pill.layer.cornerRadius = 16;
     pill.layer.borderWidth = 1;
     pill.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.10].CGColor;
     pill.clipsToBounds = YES;
-    UIImageView *house = [[UIImageView alloc] initWithImage:LCQBHouseImage(19, 1.0, 1.5)];
-    house.frame = CGRectMake(11, (32 - 19) / 2, 19, 19);
+    pill.userInteractionEnabled = NO;
+    UIImageView *house = [[UIImageView alloc] initWithImage:LCQBHouseImage(17, 1.0, 1.5)];
+    house.frame = CGRectMake(9, (32 - 17) / 2, 17, 17);
     [pill addSubview:house];
-    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(11 + 19 + 8, 0, textWidth + 2, 32)];
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(9 + 17 + 6, 0, textWidth + 2, 32)];
     label.text = @"游戏库";
     label.font = labelFont;
     label.textColor = UIColor.whiteColor;
     [pill addSubview:label];
-    [pill addTarget:self action:@selector(resetCollapseTimer) forControlEvents:UIControlEventTouchDown];
-    [pill addTarget:self action:@selector(returnToLibrary) forControlEvents:UIControlEventTouchUpInside];
     [_barContent addSubview:pill];
+    _pillButton = pill;
 
     UIButton *collapse = [UIButton buttonWithType:UIButtonTypeCustom];
-    collapse.frame = CGRectMake(45 + pillWidth + 8, (LCQBBarHeight - 30) / 2, 28, 30);
-    [collapse addTarget:self action:@selector(collapseAnimated) forControlEvents:UIControlEventTouchUpInside];
+    collapse.frame = CGRectMake(12 + pillWidth, 0, 44, LCQBBarHeight);
+    collapse.userInteractionEnabled = NO;
     [_barContent addSubview:collapse];
     _collapseButton = collapse;
 
-    _barWidth = 45 + pillWidth + 8 + 28 + 6;
+    [_barContent addSubview:barTouch];
+
+    _barWidth = 12 + pillWidth + 44;
 }
 
 #pragma mark 持久化
@@ -915,7 +960,7 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     return MAX(half, MIN(center, bounds.size.width - half));
 }
 
-// 上边吸附帧（唯一的吸附几何）：横舌 76×44，上侧 18pt 藏在屏外
+// 上边吸附帧（唯一的吸附几何）：横舌 60×44，上侧 18pt 藏在屏外
 - (CGRect)dockedFrameForBounds:(CGRect)bounds {
     CGFloat center = [self alongCenterForBounds:bounds];
     return CGRectMake(center - LCQBTongueLength / 2, -(LCQBTongueThickness - LCQBTongueVisible),
@@ -993,20 +1038,20 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     [self layoutForBounds:bounds];
 }
 
-// 舌内元素沿长轴（水平）依次排：握把 17、间 9、手柄 18、间 9、箭头 11，共 64，
-// 居中于长轴；纵轴对准可见带中心（贴顶边一侧 18pt 藏在屏外）。
+// 舌内元素沿长轴（水平）依次排：握把 13、间 6、手柄 16、间 6、箭头 10，共 51，
+// 居中于长轴（两侧各 4.5）；纵轴对准可见带中心（贴顶边一侧 18pt 藏在屏外）。
 - (void)layoutTongueContent {
     _tongueTouch.frame = _tongueContent.bounds;
     CGFloat stripCenter = LCQBTongueThickness - LCQBTongueVisible / 2;
     _gripView.image = LCQBGripImage(NO);
     _gamepadView.image = LCQBGamepadImage();
-    CGFloat along[3] = {17, 18, 11};
-    CGFloat cross[3] = {11, 18, 11};
+    CGFloat along[3] = {13, 16, 10};
+    CGFloat cross[3] = {9, 16, 10};
     UIView *views[3] = {_gripView, _gamepadView, _chevronView};
-    CGFloat pos = (LCQBTongueLength - 64) / 2;
+    CGFloat pos = (LCQBTongueLength - 51) / 2;
     for (int i = 0; i < 3; i++) {
         views[i].frame = CGRectMake(pos, stripCenter - cross[i] / 2, along[i], cross[i]);
-        pos += along[i] + 9;
+        pos += along[i] + 6;
     }
 }
 
@@ -1045,6 +1090,7 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
         bar.transform = CGAffineTransformIdentity;
     } completion:^(BOOL finished) {
         self->_animating = NO;
+        [self flushPendingRelayoutIfNeeded];
     }];
     [self resetCollapseTimer];
 }
@@ -1066,6 +1112,7 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
         self->_animating = NO;
         // 收回后回到吸附态：经 layoutForBounds 的钳制按当前 bounds 重排
         [self layoutForBounds:self->_scene.coordinateSpace.bounds];
+        [self flushPendingRelayoutIfNeeded];
     }];
 }
 
@@ -1100,28 +1147,41 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
 
 #pragma mark 拖动与吸附
 
-// 拖动跟手：每事件只做一次无动画的原点直写——不走 layoutForBounds 全量几何
-// （吸附判定 / 钳制 / 持久化只在松手时各做一次，见 finishDragFromTongue/Bar），
-// CATransaction 关掉隐式动画，避免图层把每帧位移再插值一遍造成拖尾与抖动。
-- (void)dragWindowBy:(CGPoint)delta {
-    CGRect frame = _window.frame;
-    frame.origin.x += delta.x;
-    frame.origin.y += delta.y;
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    _window.frame = frame;
-    [CATransaction commit];
+// 展开栏轻点分发：触摸层全栏覆盖、两钮不拦截，落点在胶囊内走回库、
+// 在收起钮命中域内走收起，其余只重置自动收起计时（与旧 onTap 行为一致）。
+- (void)barTapAtPoint:(CGPoint)point {
+    [self dragDidEnd];
+    if (CGRectContainsPoint(_pillButton.frame, point)) {
+        [self returnToLibrary];
+    } else if (CGRectContainsPoint(_collapseButton.frame, point)) {
+        [self collapseAnimated];
+    } else {
+        [self resetCollapseTimer];
+    }
 }
 
-- (void)dragBarBy:(CGPoint)delta {
-    CGRect frame = _barGlass.frame;
-    frame.origin.x += delta.x;
-    frame.origin.y += delta.y;
+// 拖动跟手（绝对锚定）：越过拖动阈值时记锚点（场景坐标触摸点）与起始帧，
+// 之后每事件以「起始帧 + 当前点 − 锚点」一次算定——不累加增量、无自参照
+// 污染。只写 x：Y 全程钉死在起始帧的 y（舌 −18 / 栏 12），竖直拉不动。
+// 每事件只做一次无动画直写，不走 layoutForBounds 全量几何（吸附判定 /
+// 钳制 / 持久化只在松手时各做一次，见 finishDragFromTongue/Bar），
+// CATransaction 关掉隐式动画，避免图层把每帧位移再插值一遍造成拖尾。
+- (void)dragAnchorStartAtPoint:(CGPoint)point forBar:(BOOL)isBar {
+    _dragAnchorPoint = point;
+    _dragStartFrame = isBar ? _barGlass.frame : _window.frame;
+    _dragAnchored = YES;
+}
+
+- (void)dragAnchoredToPoint:(CGPoint)point forBar:(BOOL)isBar {
+    if (!_dragAnchored) return;
+    CGRect frame = _dragStartFrame;
+    frame.origin.x = _dragStartFrame.origin.x + (point.x - _dragAnchorPoint.x);
+    // frame.origin.y 不写：保持 _dragStartFrame 的 y，即钉死
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    _barGlass.frame = frame;
+    if (isBar) _barGlass.frame = frame; else _window.frame = frame;
     [CATransaction commit];
-    // 注：不再逐事件 resetCollapseTimer（每事件销毁/重建 NSTimer 是无谓的
+    // 注：不逐事件 resetCollapseTimer（每事件销毁/重建 NSTimer 是无谓的
     // runloop churn）；拖动中的自动收起由 collapseFromTimer 的 _dragging
     // 改期兜住，计时在 touchBegan 时已重置。
 }
@@ -1134,9 +1194,12 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     [_window.layer removeAllAnimations];
 }
 
-// 轻点（未成拖动）结束触摸时复位：自愈只在真拖动/动画期间让行
+// 轻点（未成拖动）结束触摸时复位：自愈只在真拖动/动画期间让行；
+// 若轻点期间有转屏重排被挡下，在此补跑（随后若触发展开，动画完成还会再核对）
 - (void)dragDidEnd {
     _dragging = NO;
+    _dragAnchored = NO;
+    [self flushPendingRelayoutIfNeeded];
 }
 
 // 松手一律吸回上边：只取落点的水平坐标换算沿边比例落盘，纵向位置不保留
@@ -1148,19 +1211,25 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
 
 - (void)finishDragFromTongue {
     _dragging = NO;
+    _dragAnchored = NO;
     CGRect bounds = _scene.coordinateSpace.bounds;
     [self snapToTopFromCenter:_window.center inBounds:bounds];
     [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
         [self layoutForBounds:bounds];
-    } completion:nil];
+    } completion:^(BOOL finished) {
+        // 归位动画本身不置 _animating，待办重排在此补跑（内部按当前 bounds
+        // 判等，拖动中真转了屏才生效，不与归位帧冲突）
+        [self flushPendingRelayoutIfNeeded];
+    }];
 }
 
 - (void)finishDragFromBar {
     _dragging = NO;
+    _dragAnchored = NO;
     CGRect bounds = _scene.coordinateSpace.bounds;
     CGPoint center = CGPointMake(CGRectGetMidX(_barGlass.frame), CGRectGetMidY(_barGlass.frame));
     [self snapToTopFromCenter:center inBounds:bounds];
-    [self collapseAnimated];
+    [self collapseAnimated]; // 其 completion 补跑待办重排
 }
 
 #pragma mark 回库
