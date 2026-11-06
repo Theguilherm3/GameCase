@@ -25,6 +25,12 @@
 //  页剪辑 / 扩展直启客体时不经此漏斗，沿用上一次维护出的一行（mods
 //  没变就仍然正确）。
 //
+//  自扫桥（refreshModBridge）：同一趟维护还把生效 mod 以符号链接
+//  镜像到 Documents/games/<titleID>/mods/——按 NX2 布局自扫 mods
+//  的第三方客体启动器扫的是那里、自拼 overlay，env 行对它无效；
+//  镜像让它的自扫也能命中同一批真身。读 env.txt 的客体（自家构
+//  建）不受影响，桥对它只是闲置链接。
+//
 //  金手指的 DM_CHEATS 行搭同一条维护通道（LCGameCheats）：refresh
 //  EnvOverlay 在同一次维护里先处理 overlay 行、再处理 DM_CHEATS
 //  行，两行共用 maintainEnvLine 这一个写者——绝不另开第二个 env.txt
@@ -312,15 +318,18 @@ enum LCGameMods {
     /// Documents/env.txt 的两行：先 DM_ROMFS_OVERLAY（mods 现算，
     /// 无可用 mod 删行）、后 DM_CHEATS（cheats 夹内有文件名合规的
     /// .txt 才写 cheats、否则删行，判据见 LCGameCheats）。两行共用
-    /// maintainEnvLine 这一个写者，他行逐字保留。维护失败静默吞
-    /// 掉：mod / 金手指都只是增强，绝不能挡游戏启动。
+    /// maintainEnvLine 这一个写者，他行逐字保留。同一趟再维护自扫
+    /// 桥（refreshModBridge）。维护失败静默吞掉：mod / 金手指都
+    /// 只是增强，绝不能挡游戏启动。
     static func refreshEnvOverlay(container: LCContainer, bundleIdentifier: String) {
         guard let titleID = titleID(bundleIdentifier: bundleIdentifier) else { return }
         let documents = container.containerURL.appendingPathComponent("Documents")
         let envFile = documents.appendingPathComponent("env.txt")
-        let overlay = overlayValue(in: documents.appendingPathComponent("mods", isDirectory: true), titleID: titleID)
+        let modsDir = documents.appendingPathComponent("mods", isDirectory: true)
+        let overlay = overlayValue(in: modsDir, titleID: titleID)
         maintainEnvLine(envFile: envFile, key: envKey, value: overlay)
         maintainEnvLine(envFile: envFile, key: LCGameCheats.envKey, value: LCGameCheats.cheatsEnvValue(in: documents))
+        refreshModBridge(documents: documents, modsDir: modsDir, titleID: titleID)
     }
 
     /// 启动漏斗入口：容器取 runApp 即将启动的那一个（与
@@ -328,6 +337,59 @@ enum LCGameMods {
     static func refreshEnvOverlay(for app: LCAppModel) {
         guard let container = LCGameLibraryInfo.defaultContainer(for: app) else { return }
         refreshEnvOverlay(container: container, bundleIdentifier: app.bundleIdentifier)
+    }
+
+    /// 自扫桥：有些第三方构建的客体启动器不靠 env.txt，而是按 NX2
+    /// 壳的布局自己扫 Documents/games/<titleID>/mods/、扫到后自行
+    /// 拼 DM_ROMFS_OVERLAY（还可能先占/清掉 env 文件的值）——这类
+    /// 客体在 GC 里只看它扫的那个位置，Documents/mods 里的真身它
+    /// 永远扫不到，env 行也救不了。GC 在同一次启动维护里把生效
+    /// mod 以符号链接镜像到那个位置：链接目标是相对路径
+    /// ../../../mods/<名>，指回 Documents/mods 的真身，启停 / 增
+    /// 删 / 排序仍只管真身一处，客体自扫的 resolveRomfsRoot 判据
+    /// 作用在链接上与真身无异。只认自己建的链接（目标恰为上式）
+    /// 才清理，玩家在桥位置自放的真实文件 / 文件夹一律不碰；没
+    /// 有生效 mod 时清光自建链接并收掉空目录链。失败静默，同 env
+    /// 维护政策，绝不挡启动。
+    static func refreshModBridge(documents: URL, modsDir: URL, titleID: String, _ fm: FileManager = .default) {
+        let bridgeMods = documents
+            .appendingPathComponent("games", isDirectory: true)
+            .appendingPathComponent(titleID, isDirectory: true)
+            .appendingPathComponent("mods", isDirectory: true)
+        let desired = effectiveMods(in: modsDir, titleID: titleID, fm)
+        let desiredNames = Set(desired.map(\.name))
+        // 清理：桥下自建的、已不在生效名单里的链接
+        if let existing = try? fm.contentsOfDirectory(atPath: bridgeMods.path) {
+            for name in existing where !desiredNames.contains(name) {
+                let link = bridgeMods.appendingPathComponent(name)
+                guard let dest = try? fm.destinationOfSymbolicLink(atPath: link.path),
+                      dest == "../../../mods/\(name)" else { continue }
+                try? fm.removeItem(at: link)
+            }
+        }
+        // 建链：生效名单里缺的补上；同名已有条目（真实文件夹 /
+        // 玩家自放的东西）不覆盖
+        if !desired.isEmpty {
+            try? fm.createDirectory(at: bridgeMods, withIntermediateDirectories: true)
+            for mod in desired {
+                let link = bridgeMods.appendingPathComponent(mod.name)
+                guard !fm.fileExists(atPath: link.path),
+                      (try? fm.destinationOfSymbolicLink(atPath: link.path)) == nil else { continue }
+                try? fm.createSymbolicLink(atPath: link.path, withDestinationPath: "../../../mods/\(mod.name)")
+            }
+        }
+        // 收空：自建目录链空了逐层删（非空删不动、自然止步）
+        if (try? fm.contentsOfDirectory(atPath: bridgeMods.path))?.isEmpty == true {
+            try? fm.removeItem(at: bridgeMods)
+            let tidDir = bridgeMods.deletingLastPathComponent()
+            if (try? fm.contentsOfDirectory(atPath: tidDir.path))?.isEmpty == true {
+                try? fm.removeItem(at: tidDir)
+                let gamesDir = tidDir.deletingLastPathComponent()
+                if (try? fm.contentsOfDirectory(atPath: gamesDir.path))?.isEmpty == true {
+                    try? fm.removeItem(at: gamesDir)
+                }
+            }
+        }
     }
 
     /// 行级维护 env 文件中的一行 `KEY=VALUE`：
