@@ -15403,6 +15403,125 @@
         }
       }
     },
+    "lc.datapack.chooseFolder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Folder"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择文件夹"
+          }
+        }
+      }
+    },
+    "lc.datapack.folderFailed %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Folder import failed: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文件夹导入失败：%@"
+          }
+        }
+      }
+    },
+    "lc.datapack.folderHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The folder's top level must contain romfs.img and/or an aoc folder. Its contents are copied into this game's Documents: romfs.img replaces the datapack, aoc is replaced as a whole."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文件夹顶层须包含 romfs.img 和/或 aoc 文件夹，内容会拷入该游戏的 Documents：romfs.img 替换数据包，aoc 整夹替换。"
+          }
+        }
+      }
+    },
+    "lc.datapack.folderOverwriteButton": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replace with Folder"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用文件夹替换"
+          }
+        }
+      }
+    },
+    "lc.datapack.folderOverwriteMessage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importing this folder replaces the current datapack (%@) and any existing aoc content."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入这个文件夹会替换当前数据包（%@）与已有的 aoc 内容。"
+          }
+        }
+      }
+    },
+    "lc.datapack.folderOverwriteTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Datapack Already Exists"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已有数据包"
+          }
+        }
+      }
+    },
+    "lc.datapack.folderRejected": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not a datapack folder: no romfs.img or aoc folder at its top level. A loose folder of romfs files can't be mounted — pack it into romfs.img first."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不是数据包文件夹：顶层没有 romfs.img 或 aoc 文件夹。散装的 romfs 文件夹无法挂载，请先打包成 romfs.img。"
+          }
+        }
+      }
+    },
     "lc.download.downloading": {
       "extractionState": "manual",
       "localizations": {
