@@ -26,6 +26,8 @@ enum LCGameTheme {
     static let sectionText = Color(red: 228 / 255, green: 224 / 255, blue: 218 / 255)
     static let readyGreen = Color(red: 64 / 255, green: 214 / 255, blue: 120 / 255)
     static let missingAmber = Color(red: 1.0, green: 176 / 255, blue: 66 / 255)
+    /// 已损坏（状态机三态新增，与设置页 LCNXColor.broken 同值）
+    static let brokenRed = Color(red: 1.0, green: 0.42, blue: 0.38)
     static let chipBackground = Color(red: 30 / 255, green: 28 / 255, blue: 29 / 255).opacity(0.92)
     static let chipBorder = Color.white.opacity(0.18)
     static let chipIcon = Color(red: 232 / 255, green: 230 / 255, blue: 228 / 255)
@@ -148,11 +150,18 @@ struct LCGameHomeView: View {
     /// 原地变形；Phase 14 的 sheet / 面板打开时二选一已废除）
     @State private var controllerPanelPresented = false
 
-    // 横屏轮播（NX2 CoverFlow 移植）专用状态，竖屏不读：
-    // 顺序快照在视图出现时取，浏览期间不重排（新导入的游戏追加在末尾、
-    // 已卸载的剔除，相对次序冻结）；carouselOffset 是 >3 张时手势轮播的
-    // 滚动量（点），静止时恒等于聚焦序号 × stride。
-    @State private var landscapeOrderKeys: [String] = []
+    @State private var stateHelpTarget: LCGameStateTarget?
+
+    // 库顺序快照（照 NX2 LibraryOrder 的分组排序，竖屏网格与横屏
+    // 牌组共用）：主页出现时按「最近游玩 → 可玩 → 缺数据包 →
+    // 已损坏」（组内规则见 LCGameLibraryInfo.libraryOrder）定序一次，
+    // 浏览期间不重排（新导入的游戏追加在末尾、已卸载的剔除，相对
+    // 次序冻结；状态点颜色是现算的、会变，位置不变）。竖屏下方的
+    // 「最近游玩」区是分组第 0 组（玩过的游戏）的独立呈现，仍走
+    // recentApps，不受本快照影响；聚焦与 hero 也不读顺序。
+    // carouselOffset 是 >3 张时手势轮播的滚动量（点），静止时恒
+    // 等于聚焦序号 × stride。
+    @State private var libraryOrderKeys: [String] = []
     @State private var carouselOffset: CGFloat = 0
     @State private var carouselDragStartOffset: CGFloat = 0
     @State private var carouselGestureStart = 0
@@ -218,15 +227,21 @@ struct LCGameHomeView: View {
 
     // MARK: 横屏轮播的顺序与聚焦（NX2 CoverFlow 移植辅助）
 
-    /// 横屏数据源：快照次序 ∩ 现有游戏，新游戏追加末尾；快照为空（首次
-    /// 出现前）时退回入参次序。浏览期间相对次序不变，重排只发生在
-    /// onAppear 刷新快照时。
-    private var landscapeApps: [LCAppModel] {
+    /// 全主页共用的有序数据源（横屏牌组与竖屏「你的游戏」网格同读）：
+    /// 顺序快照 ∩ 现有游戏，新游戏追加末尾；快照为空（首次出现前）时
+    /// 退回入参次序。浏览期间相对次序不变，重排只发生在 onAppear
+    /// 刷新快照时（快照的生成规则见 LCGameLibraryInfo.libraryOrder）。
+    private var orderedApps: [LCAppModel] {
         let byKey = Dictionary(uniqueKeysWithValues: apps.map { (key(of: $0), $0) })
-        var result = landscapeOrderKeys.compactMap { byKey[$0] }
-        let known = Set(landscapeOrderKeys)
+        var result = libraryOrderKeys.compactMap { byKey[$0] }
+        let known = Set(libraryOrderKeys)
         result += apps.filter { !known.contains(key(of: $0)) }
         return result.isEmpty ? apps : result
+    }
+
+    /// 横屏牌组数据源 = 全主页有序口径（旧名保留，横屏内部读法不变）
+    private var landscapeApps: [LCAppModel] {
+        orderedApps
     }
 
     private func landscapeFocusIndex(in list: [LCAppModel]) -> Int {
@@ -265,13 +280,36 @@ struct LCGameHomeView: View {
         return min(count - 1, max(0, card))
     }
 
-    private func datapackReady(_ app: LCAppModel) -> Bool {
-        // 读 refreshToken 把依赖写明：令牌变化时状态点随 body 按磁盘重算。
-        // 求值走共用入口：先按记录对齐容器快照再查 romfs.img——手动经
-        // 「文件」App 放的包没有任何 App 内事件来对齐快照，直查快照会
-        // 停在错误容器上长期报缺失（玩家实证，本次修复点）。
+    /// 游戏状态求值（主页全部状态呈现的单一入口）：读 refreshToken
+    /// 把依赖写明，令牌变化时状态随 body 按磁盘重算。求值走
+    /// LCGameLibraryInfo.gameState：先按记录对齐容器快照再查
+    /// romfs.img——手动经「文件」App 放的包没有任何 App 内事件来
+    /// 对齐快照，直查快照会停在错误容器上长期报缺失（玩家实证）。
+    /// 三态与旧二态（LCGameLibraryInfo.datapackReady，导入链复核
+    /// 仍在用）的差异只在损坏态：二态把异常文件也算「在」，三态
+    /// 把异常单列已损坏。
+    private func gameState(_ app: LCAppModel) -> LCGameState {
         _ = refreshToken
-        return LCGameLibraryInfo.datapackReady(for: app)
+        return LCGameLibraryInfo.gameState(for: app)
+    }
+
+    /// 横屏信息区状态文案色：可玩 / 缺包沿用旧浅色值（比状态点色浅，
+    /// 是横屏信息区原有的排法），损坏用 brokenRed
+    private func stateTextColor(_ state: LCGameState) -> Color {
+        switch state {
+        case .playable: return Color(red: 196 / 255, green: 232 / 255, blue: 204 / 255)
+        case .needsDatapack: return Color(red: 1.0, green: 196 / 255, blue: 110 / 255)
+        case .broken: return LCGameTheme.brokenRed
+        }
+    }
+
+    /// 横屏非聚焦卡左下状态胶囊的底色：缺包沿用旧暗琥珀，损坏用暗红
+    private func capsuleBackground(_ state: LCGameState) -> Color {
+        switch state {
+        case .needsDatapack: return Color(red: 24 / 255, green: 18 / 255, blue: 8 / 255).opacity(0.85)
+        case .broken: return Color(red: 30 / 255, green: 12 / 255, blue: 10 / 255).opacity(0.85)
+        case .playable: return Color.clear
+        }
     }
 
     /// 「最近游玩」排序：lastLaunched 倒序，从未启动过的排后面
@@ -344,6 +382,13 @@ struct LCGameHomeView: View {
             .frame(width: size.width, height: size.height)
         }
         .ignoresSafeArea()
+        // 状态帮助页：竖屏 hero / 横屏信息区的状态行点开（非可玩态），
+        // 内容与导入动作见 LCGameStateHelpSheet；导入走主页既有回调
+        .sheet(item: $stateHelpTarget) { target in
+            LCGameStateHelpSheet(app: target.app, state: target.state, onImportDatapack: {
+                onImportDatapack(target.app)
+            })
+        }
         .onAppear {
             // 页面出现先把全部游戏的容器快照按记录对齐：主页的状态点
             // 求值虽走共用入口（内含对齐），这里先行一步让封面 / 时长等
@@ -352,7 +397,7 @@ struct LCGameHomeView: View {
                 app.refreshContainerSelection()
             }
             ensureFocus()
-            landscapeOrderKeys = apps.map { key(of: $0) }
+            libraryOrderKeys = LCGameLibraryInfo.libraryOrder(of: apps).map { key(of: $0) }
             // 游玩时长补结（Phase 18）：主页出现 = 此刻没有客体在本进程跑，
             // 统计文件里还挂着的 openSession 必是闪退/被划掉没结清的局，
             // 按心跳补结后再读快照（回库路径已由客体侧结清，这里是空转）。
@@ -691,12 +736,22 @@ struct LCGameHomeView: View {
                 Spacer()
                 if let app = focusedApp {
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            statusDot(color: datapackReady(app) ? LCGameTheme.readyGreen : LCGameTheme.missingAmber, radius: 5)
-                            Text(datapackReady(app) ? "随时可玩" : "缺数据包")
-                                .font(.system(size: 13.5, weight: .bold))
-                                .foregroundColor(datapackReady(app) ? LCGameTheme.readyGreen : LCGameTheme.missingAmber)
+                        // 状态行三态呈现（照 NX GameStateView 口径）：非
+                        // 可玩时整行可点，打开状态帮助页（怎么修 + 动作）
+                        Button {
+                            let state = gameState(app)
+                            if !state.isPlayable {
+                                stateHelpTarget = LCGameStateTarget(app: app, state: state)
+                            }
+                        } label: {
+                            HStack(spacing: 8) {
+                                statusDot(color: gameState(app).themeColor, radius: 5)
+                                Text(gameState(app).title)
+                                    .font(.system(size: 13.5, weight: .bold))
+                                    .foregroundColor(gameState(app).themeColor)
+                            }
                         }
+                        .buttonStyle(.plain)
                         Text(app.displayName)
                             .font(.system(size: 32, weight: .bold))
                             .foregroundColor(.white)
@@ -733,13 +788,13 @@ struct LCGameHomeView: View {
             .padding(.bottom, 14)
 
             LazyVGrid(columns: [GridItem(.flexible(), spacing: spacing), GridItem(.flexible(), spacing: spacing)], spacing: 18) {
-                ForEach(apps, id: \.self) { app in
+                ForEach(orderedApps, id: \.self) { app in
                     VStack(alignment: .leading, spacing: 8) {
                         LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
                             .frame(width: columnWidth, height: columnWidth * 9 / 16)
                             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                             .overlay(alignment: .topLeading) {
-                                statusDot(color: datapackReady(app) ? LCGameTheme.readyGreen : LCGameTheme.missingAmber, radius: 5)
+                                statusDot(color: gameState(app).themeColor, radius: 5)
                                     .padding(10)
                             }
                             .contentShape(Rectangle())
@@ -829,12 +884,12 @@ struct LCGameHomeView: View {
 
     @ViewBuilder
     private func recentSubtitle(for app: LCAppModel) -> some View {
-        if !datapackReady(app) {
+        if !gameState(app).isPlayable {
             HStack(spacing: 6) {
-                statusDot(color: LCGameTheme.missingAmber, radius: 3.5)
-                Text("缺数据包")
+                statusDot(color: gameState(app).themeColor, radius: 3.5)
+                Text(gameState(app).title)
                     .font(.system(size: 12.5, weight: .bold))
-                    .foregroundColor(LCGameTheme.missingAmber)
+                    .foregroundColor(gameState(app).themeColor)
             }
         } else if let lastLaunched = app.appInfo.lastLaunched {
             Text(playedText(for: lastLaunched))
@@ -1032,7 +1087,7 @@ struct LCGameHomeView: View {
     /// 18/28、两行预留、切换只交叉淡化不跳高），其下 34pt 定高行放 LC
     /// 自己的数据包状态；开始入口仍是点聚焦卡本身，不搬 NX 的状态文案。
     private func landscapeInfo(app: LCAppModel, metrics: LCLandscapeMetrics, width w: CGFloat) -> some View {
-        let ready = datapackReady(app)
+        let state = gameState(app)
         return ZStack(alignment: .top) {
             // 隐藏占位先量好两行标题 + 34 状态行，切换时只有文字淡换
             VStack(spacing: 8) {
@@ -1052,15 +1107,24 @@ struct LCGameHomeView: View {
                     .multilineTextAlignment(.center)
                     .foregroundColor(.white)
                     .shadow(color: .black.opacity(0.35), radius: 10)
-                HStack(spacing: 7) {
-                    statusDot(color: ready ? LCGameTheme.readyGreen : LCGameTheme.missingAmber, radius: 4)
-                    Text(ready ? "随时可玩 · 数据包已就绪" : "缺数据包")
-                        .font(.system(size: 12))
-                        .foregroundColor(ready
-                            ? Color(red: 196 / 255, green: 232 / 255, blue: 204 / 255)
-                            : Color(red: 1.0, green: 196 / 255, blue: 110 / 255))
+                // 状态行三态呈现：文案/色随状态（可玩与缺包沿用旧
+                // 文案与浅色值，损坏新增红色「已损坏」）；非可玩时
+                // 可点开状态帮助页，与竖屏 hero 同一入口
+                Button {
+                    if !state.isPlayable {
+                        stateHelpTarget = LCGameStateTarget(app: app, state: state)
+                    }
+                } label: {
+                    HStack(spacing: 7) {
+                        statusDot(color: state.themeColor, radius: 4)
+                        Text(state.isPlayable ? "随时可玩 · 数据包已就绪" : state.title)
+                            .font(.system(size: 12))
+                            .foregroundColor(stateTextColor(state))
+                    }
+                    .frame(height: 34)
+                    .contentShape(Rectangle())
                 }
-                .frame(height: 34)
+                .buttonStyle(.plain)
             }
             .id(key(of: app))
             .transition(.opacity)
@@ -1080,7 +1144,7 @@ struct LCGameHomeView: View {
     /// （固定字号 / 内距）不成比例，须按缩放比还原旧的有效尺寸；
     /// 默认 1 时与旧口径逐点一致。
     private func landscapeCard(app: LCAppModel, cardW: CGFloat, isFocused: Bool, transformScale: CGFloat = 1) -> some View {
-        let ready = datapackReady(app)
+        let state = gameState(app)
         let dot = max(8, min(14, (cardW / transformScale) * 0.034)) * transformScale
         return LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
             .frame(width: cardW, height: cardW * 9 / 16)
@@ -1090,22 +1154,22 @@ struct LCGameHomeView: View {
                     .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
             }
             .overlay(alignment: .topLeading) {
-                statusDot(color: ready ? LCGameTheme.readyGreen : LCGameTheme.missingAmber, radius: dot / 2)
+                statusDot(color: state.themeColor, radius: dot / 2)
                     .padding(dot * 0.9)
             }
             .overlay(alignment: .bottomLeading) {
-                if !isFocused && !ready {
+                if !isFocused && !state.isPlayable {
                     HStack(spacing: 6 * transformScale) {
                         Circle()
-                            .fill(LCGameTheme.missingAmber)
+                            .fill(state.themeColor)
                             .frame(width: 8 * transformScale, height: 8 * transformScale)
-                        Text("缺数据包")
+                        Text(state.title)
                             .font(.system(size: 10.5 * transformScale, weight: .bold))
-                            .foregroundColor(LCGameTheme.missingAmber)
+                            .foregroundColor(state.themeColor)
                     }
                     .padding(.horizontal, 10 * transformScale)
                     .padding(.vertical, 5 * transformScale)
-                    .background(Capsule().fill(Color(red: 24 / 255, green: 18 / 255, blue: 8 / 255).opacity(0.85)))
+                    .background(Capsule().fill(capsuleBackground(state)))
                     .padding(10 * transformScale)
                 }
             }

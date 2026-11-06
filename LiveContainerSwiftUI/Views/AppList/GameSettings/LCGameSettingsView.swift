@@ -38,6 +38,8 @@ private enum LCNXColor {
     static let cream = Color(red: 1, green: 0.94, blue: 0.84)
     static let ready = Color(red: 0.25, green: 0.84, blue: 0.47)
     static let attention = Color(red: 1, green: 0.78, blue: 0.24)
+    /// 已损坏（状态机三态新增，与 LCGameTheme.brokenRed / 主页同值）
+    static let broken = Color(red: 1, green: 0.42, blue: 0.38)
     static let hairline = Color.white.opacity(0.08)
 }
 
@@ -286,6 +288,7 @@ struct LCGameSettingsView: View {
     /// env → 当前生效值（已保存选择 ?? env 固定值 ?? 档案默认值），驱动所有行显示
     @State private var currentValues: [String: String] = [:]
     @State private var datapackRequest: LCDatapackRequest?
+    @State private var logPresented = false // 日志查看器（游戏组日志行 / 损坏帮助卡共用）
     @State private var statusRefresh = 0 // 数据包导入完成后 bump，刷新状态点
     @State private var confirmReset = false
     @State private var headerWidth: CGFloat = 0 // 封面头实测宽（NX PaneBanner 同法，背景 GeometryReader 回填）
@@ -435,6 +438,9 @@ struct LCGameSettingsView: View {
         }) { request in
             LCDatapackImportView(request: request, apps: [app])
         }
+        .sheet(isPresented: $logPresented) {
+            LCGameLogView(app: app)
+        }
         .confirmationDialog("恢复默认设置？", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("恢复默认", role: .destructive) {
                 resetAll()
@@ -574,12 +580,13 @@ struct LCGameSettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(datapackReady ? LCNXColor.ready : LCNXColor.attention)
+                    .fill(stateColor)
                     .frame(width: 7, height: 7)
-                Text(datapackReady ? "随时可玩" : "需要导入数据包")
+                Text(stateHeadline)
                     .font(.system(size: 11.5, weight: .bold))
                     .tracking(1.3)
-                    .foregroundColor(datapackReady ? LCNXColor.ready : LCNXColor.attention)
+                    .foregroundColor(stateColor)
+                    .lineLimit(1)
             }
             ZStack(alignment: .bottomLeading) {
                 Text("M\nM")
@@ -694,22 +701,23 @@ struct LCGameSettingsView: View {
 
     // MARK: 头部以下（NX GameDetailView 的头部块与分组）
 
-    /// NX GameDetailView 头部块：说明行（14、白 0.72）+ 状态动作；
-    /// LC 语义——说明行固定文案，动作胶囊仅缺数据包时出现
-    /// （PrimaryPillStyle + folder 图标，走既有数据包导入流程），
-    /// 已就绪时无胶囊；不加开始游戏（用户早前已把启动撤出设置页）。
+    /// NX GameDetailView 头部块：说明行（14、白 0.72）+ 状态区；
+    /// LC 语义——说明行固定文案，状态区照 NX GameStateView 的形态：
+    /// 可玩时什么都不出；缺数据包 / 已损坏时出一张修复帮助卡
+    /// （状态 + 怎么修 + 动作：导入数据包 / 查看日志 + 重新导入，
+    /// 见 LCGameStateHelpCard），动作仍走既有导入流程与本页日志页；
+    /// 不加开始游戏（用户早前已把启动撤出设置页）。
     private var detailLead: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("设置写入游戏容器，下次启动生效")
                 .font(.system(size: 14))
                 .foregroundColor(.white.opacity(0.72))
-            if !datapackReady {
-                Button {
+            if !gameState.isPlayable {
+                LCGameStateHelpCard(state: gameState, onImportDatapack: {
                     datapackRequest = LCDatapackRequest(app: app)
-                } label: {
-                    Label("导入数据包…", systemImage: "folder")
-                }
-                .buttonStyle(LCNXPrimaryPillStyle())
+                }, onShowLog: {
+                    logPresented = true
+                })
             }
         }
     }
@@ -748,6 +756,52 @@ struct LCGameSettingsView: View {
         return LCGameLibraryInfo.datapackReady(for: app)
     }
 
+    /// 游戏状态（三态，与库主页共用 LCGameLibraryInfo.gameState 解析，
+    /// 判定口径见 LCGameState.swift 文件头）。本页头部状态行、detailLead
+    /// 帮助卡、数据包行都读它；旧 datapackReady 二态保留给其余既有
+    /// 读数（两套口径的差异只在损坏态：二态把异常文件也算「在」，
+    /// 三态把异常单列已损坏，导入链复核仍走二态、未动）。
+    private var gameState: LCGameState {
+        _ = statusRefresh
+        return LCGameLibraryInfo.gameState(for: app)
+    }
+
+    private var stateColor: Color {
+        switch gameState {
+        case .playable: return LCNXColor.ready
+        case .needsDatapack: return LCNXColor.attention
+        case .broken: return LCNXColor.broken
+        }
+    }
+
+    /// 头部状态文案：可玩 / 缺包沿用旧文案；损坏照 NX StatusLabel 的
+    /// broken 形态直接显示短原因（全文在帮助卡里，头部限一行）
+    private var stateHeadline: String {
+        switch gameState {
+        case .playable: return "随时可玩"
+        case .needsDatapack: return "需要导入数据包"
+        case .broken(let reason, _, _): return reason
+        }
+    }
+
+    /// 数据包行右侧值（文字 + 色，与状态三态对应）
+    private var datapackRowValue: (text: String, color: Color) {
+        switch gameState {
+        case .playable: return ("已就绪", LCNXColor.ready)
+        case .needsDatapack: return ("未导入", LCNXColor.attention)
+        case .broken: return ("已损坏", LCNXColor.broken)
+        }
+    }
+
+    /// 日志行右侧值：有日志显示大小，无日志（或还没容器）显示「暂无」
+    private var logRowValue: String {
+        _ = statusRefresh
+        guard let size = LCGameLibraryInfo.guestLogSize(for: app) else {
+            return "暂无"
+        }
+        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+    }
+
     private var gameInfoSection: some View {
         sectionCard(title: "游戏") {
             Button {
@@ -756,11 +810,11 @@ struct LCGameSettingsView: View {
                 navRow(label: "数据包 romfs.img") {
                     HStack(spacing: 7) {
                         Circle()
-                            .fill(datapackReady ? LCNXColor.ready : LCNXColor.attention)
+                            .fill(datapackRowValue.color)
                             .frame(width: 7, height: 7)
-                        Text(datapackReady ? "已就绪" : "未导入")
+                        Text(datapackRowValue.text)
                             .font(.system(size: 14.5, weight: .semibold))
-                            .foregroundColor(datapackReady ? LCNXColor.ready : LCNXColor.attention)
+                            .foregroundColor(datapackRowValue.color)
                     }
                 }
             }
@@ -783,6 +837,17 @@ struct LCGameSettingsView: View {
             } label: {
                 navRow(label: "存档") {
                     Text("在本机")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+            }
+            .buttonStyle(.plain)
+            nxDivider
+            Button {
+                logPresented = true
+            } label: {
+                navRow(label: "日志") {
+                    Text(logRowValue)
                         .font(.system(size: 12.5))
                         .foregroundColor(.white.opacity(0.5))
                 }
