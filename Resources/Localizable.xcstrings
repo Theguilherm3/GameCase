@@ -18469,6 +18469,57 @@
         }
       }
     },
+    "lc.mods.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No mods detected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未检测到 Mod"
+          }
+        }
+      }
+    },
+    "lc.mods.note": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Place mod folders in this game's data folder under Documents/mods/. They take effect on the next launch, in folder name order, and the first one wins for the same file. Rename a folder to start with a dot to disable it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把 Mod 文件夹放进这款游戏数据目录的 Documents/mods/ 里，下次启动生效，按文件夹名顺序叠加，同一文件以先列的为准。把文件夹改名以「.」开头即可禁用。"
+          }
+        }
+      }
+    },
+    "lc.mods.section": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mods"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mod"
+          }
+        }
+      }
+    },
     "lc.multitask.copyPid": {
       "extractionState": "stale",
       "localizations": {

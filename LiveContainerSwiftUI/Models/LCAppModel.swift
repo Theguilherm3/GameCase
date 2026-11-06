@@ -366,6 +366,16 @@ class LCAppModel: ObservableObject, Hashable {
         }
         UserDefaults.standard.set(uiSelectedContainer?.folderName, forKey: "selectedContainer")
 
+        // Mod overlay 维护：按将启动容器的 Documents/mods 现状重算
+        // DM_ROMFS_OVERLAY、行级维护进该容器 Documents/env.txt（客体
+        // boot 时自读），与下方游玩时长打戳同处漏斗——已越过全部早退
+        // 分支、派发在即，每次启动现算，玩家在文件 App 增删 mod 后
+        // 下次启动即生效。override 启动（如内置 SideStore）不是 dm
+        // 客体，不适用。维护失败静默，绝不挡启动。见 LCGameMods.swift。
+        if bundleIdOverride == nil {
+            LCGameMods.refreshEnvOverlay(for: self)
+        }
+
         // 游玩时长开始戳（Phase 18）：runApp 是所有启动入口（主页开始胶囊 /
         // 横屏牌组 / 列表菜单 / 深链等）的最深公共漏斗，且此处已越过全部
         // 早退分支（已运行、多任务窗口已存在、转交其他 LC 副本——那些情形
