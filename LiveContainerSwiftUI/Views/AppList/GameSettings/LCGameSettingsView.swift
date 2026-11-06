@@ -14,8 +14,9 @@
 //  数据与语义仍是 LC 的：头部状态/胶囊走数据包状态，胶囊仅缺包时出现
 //  （「导入数据包…」），不加开始游戏；写路径（LCGamePrefs）零改。
 //  NX 独有内容（选数据文件夹 / 云存档 / 删除游戏）不搬；LC 独有行
-//  （数据包 / 封面图 / 存档 / Mod / 高级 / 恢复默认）保留功能、
-//  按 NX 的行语言排。字型：NX 用 Manrope，本页用系统字体同字号/字重代。
+//  （数据包 / 封面图 / 存档 / Mod / 金手指 / 高级 / 恢复默认）保留
+//  功能、按 NX 的行语言排。字型：NX 用 Manrope，本页用系统字体同
+//  字号/字重代。
 //  按键布局入口已临时下架（Phase 21）：编辑页与布局数据留在仓里，
 //  后续调整好再恢复入口；已保存的自定义布局仍由客体引擎读取生效。
 //
@@ -389,6 +390,10 @@ struct LCGameSettingsView: View {
                         // Mod 组：名单 + 导入 + 管理（启停 / 排序 / 删除），
                         // 无容器时子视图自隐（判据与维护机制见 LCGameMods.swift 文件头）
                         LCGameModsSectionView(app: app, refreshToken: statusRefresh)
+                        // 金手指组：导入 .txt + 逐条开关（.enabled）+ 删除，
+                        // 无容器时子视图自隐（引擎语义与 env 维护见
+                        // LCGameCheats.swift 文件头）
+                        LCGameCheatsSectionView(app: app, refreshToken: statusRefresh)
                         if hasProfile, prefs != nil, hasSavedValues {
                             resetRow
                         }

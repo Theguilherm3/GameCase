@@ -9710,6 +9710,278 @@
         }
       }
     },
+    "lc.cheats.alwaysOn": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always on"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恒开"
+          }
+        }
+      }
+    },
+    "lc.cheats.delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除"
+          }
+        }
+      }
+    },
+    "lc.cheats.deleteConfirmMessage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The cheat file “%@” and its on/off choices will be removed from this game's data. This can't be undone."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "金手指文件「%@」及其条目开关设置将从这款游戏的数据中删除，无法撤销。"
+          }
+        }
+      }
+    },
+    "lc.cheats.deleteConfirmTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Cheat File?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除金手指文件？"
+          }
+        }
+      }
+    },
+    "lc.cheats.entries": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ entries"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 个条目"
+          }
+        }
+      }
+    },
+    "lc.cheats.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Operation failed: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "操作失败：%@"
+          }
+        }
+      }
+    },
+    "lc.cheats.import": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import Cheats…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入金手指…"
+          }
+        }
+      }
+    },
+    "lc.cheats.importDone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cheats imported. They take effect on the next launch."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "金手指已导入，下次启动生效。"
+          }
+        }
+      }
+    },
+    "lc.cheats.importInvalidContent": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skipped “%@”: no cheat entries were found in it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已跳过「%@」：里面没有解析到金手指条目。"
+          }
+        }
+      }
+    },
+    "lc.cheats.importInvalidName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skipped “%@”: cheat files must be named by the game's 16-digit build ID, e.g. FC9EA4CCC955D579.txt — the engine finds cheat files by name."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已跳过「%@」：金手指文件名必须是游戏的 16 位 build ID（如 FC9EA4CCC955D579.txt），引擎靠文件名找金手指包。"
+          }
+        }
+      }
+    },
+    "lc.cheats.importOverwriteMessage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These cheat files are already installed: %@. Replace them with the imported ones?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以下金手指文件已安装：%@。用导入的替换它们吗？"
+          }
+        }
+      }
+    },
+    "lc.cheats.importOverwriteTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replace Cheat Files?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "替换金手指文件？"
+          }
+        }
+      }
+    },
+    "lc.cheats.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No cheat files yet. Import below, or place build-ID-named .txt files in Documents/cheats/."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还没有金手指。用下方按钮导入，或把以 build ID 命名的 .txt 文件放进 Documents/cheats/。"
+          }
+        }
+      }
+    },
+    "lc.cheats.note": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cheat files sit in this game's data folder under Documents/cheats/, named by the game's build ID. On iOS, entries that patch game code are switched off by the engine automatically (the reason is written to the game log); entries that only write data do take effect. Changes apply on the next launch."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "金手指文件在这款游戏数据目录的 Documents/cheats/ 里，按游戏 build ID 命名。在 iOS 上，修改游戏代码的条目会被引擎自动关停（原因会写进游戏日志），只写数据的条目可以生效。改动下次启动生效。"
+          }
+        }
+      }
+    },
+    "lc.cheats.replace": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replace"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "替换"
+          }
+        }
+      }
+    },
+    "lc.cheats.section": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cheats"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "金手指"
+          }
+        }
+      }
+    },
     "lc.common.ADP": {
       "extractionState": "stale",
       "localizations": {

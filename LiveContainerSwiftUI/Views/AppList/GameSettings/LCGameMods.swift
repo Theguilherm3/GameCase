@@ -25,6 +25,12 @@
 //  页剪辑 / 扩展直启客体时不经此漏斗，沿用上一次维护出的一行（mods
 //  没变就仍然正确）。
 //
+//  金手指的 DM_CHEATS 行搭同一条维护通道（LCGameCheats）：refresh
+//  EnvOverlay 在同一次维护里先处理 overlay 行、再处理 DM_CHEATS
+//  行，两行共用 maintainEnvLine 这一个写者——绝不另开第二个 env.txt
+//  写者。两行口径相同：都由容器目录现状决定、GC 独占维护、玩家手
+//  写同名行在下次启动被维护结果覆盖。
+//
 //  导入与管理（设置页「Mod」组）：导入把所选文件夹按扫描同规则校验
 //  后 staging 换入 Documents/mods/；管理动作（启停 / 排序 / 删除）只
 //  动 mods 本层的文件夹与顺序记录，绝不直接写 env.txt——一切效果都
@@ -302,13 +308,19 @@ enum LCGameMods {
 
     // MARK: env.txt 维护
 
-    /// 按容器当前 mods 现算并维护其 Documents/env.txt 的 overlay 行。
-    /// 维护失败静默吞掉：mod 只是增强，绝不能挡游戏启动。
+    /// 按容器当前 mods / cheats 现状、同一次维护里顺序维护其
+    /// Documents/env.txt 的两行：先 DM_ROMFS_OVERLAY（mods 现算，
+    /// 无可用 mod 删行）、后 DM_CHEATS（cheats 夹内有文件名合规的
+    /// .txt 才写 cheats、否则删行，判据见 LCGameCheats）。两行共用
+    /// maintainEnvLine 这一个写者，他行逐字保留。维护失败静默吞
+    /// 掉：mod / 金手指都只是增强，绝不能挡游戏启动。
     static func refreshEnvOverlay(container: LCContainer, bundleIdentifier: String) {
         guard let titleID = titleID(bundleIdentifier: bundleIdentifier) else { return }
         let documents = container.containerURL.appendingPathComponent("Documents")
+        let envFile = documents.appendingPathComponent("env.txt")
         let overlay = overlayValue(in: documents.appendingPathComponent("mods", isDirectory: true), titleID: titleID)
-        maintainEnvLine(envFile: documents.appendingPathComponent("env.txt"), key: envKey, value: overlay)
+        maintainEnvLine(envFile: envFile, key: envKey, value: overlay)
+        maintainEnvLine(envFile: envFile, key: LCGameCheats.envKey, value: LCGameCheats.cheatsEnvValue(in: documents))
     }
 
     /// 启动漏斗入口：容器取 runApp 即将启动的那一个（与
