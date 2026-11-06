@@ -76,7 +76,7 @@ enum LCSaveDataStore {
         return try await Task.detached(priority: .userInitiated) {
             // PKZipArchiver 在 PassKitCore 里，与 LCUtils 打包 IPA 前同法先 dlopen
             _ = dlopen("/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore", RTLD_GLOBAL)
-            guard let zipData = PKZipArchiver().zippedDataForURL(saveDir) else {
+            guard let zipData = PKZipArchiver().zippedData(for: saveDir) else {
                 throw LCSaveDataError.archiveFailed
             }
             let data = zipData as Data

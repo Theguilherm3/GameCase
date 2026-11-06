@@ -546,13 +546,15 @@ struct LCDatapackImportView: View {
                 }
                 try fm.createDirectory(at: staging, withIntermediateDirectories: true)
 
-                var total: Int64 = 0
-                if let romfs = plan.romfs { total += Self.fileSize(romfs) }
-                if let aoc = plan.aocDirectory { total += Self.treeSize(aoc) }
-                for file in plan.extraFiles { total += Self.fileSize(file) }
-                guard total > 0 else {
+                var totalAcc: Int64 = 0
+                if let romfs = plan.romfs { totalAcc += Self.fileSize(romfs) }
+                if let aoc = plan.aocDirectory { totalAcc += Self.treeSize(aoc) }
+                for file in plan.extraFiles { totalAcc += Self.fileSize(file) }
+                guard totalAcc > 0 else {
                     throw CocoaError(.fileNoSuchFile)
                 }
+                // 定格为 let 再进各闭包捕获（var 捕获在并发闭包里会触发 Swift 6 模式诊断）
+                let total = totalAcc
                 await MainActor.run { totalBytes = total }
 
                 var base: Int64 = 0
