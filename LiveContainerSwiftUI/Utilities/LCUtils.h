@@ -28,6 +28,9 @@ uint32_t dyld_get_sdk_version(const struct mach_header* mh);
 
 + (void)validateJITLessSetupWithCompletionHandler:(void (^)(BOOL success, NSError *error))completionHandler;
 + (NSURL *)archiveIPAWithBundleName:(NSString*)newBundleName includingExtraInfoDict:(NSDictionary *)extraInfoDict error:(NSError **)error;
+/// 把一个目录打成 zip 数据（PassKitCore 的 PKZipArchiver，与 archiveIPA 同件；
+/// 该类不可链接、只能运行时取，故 Swift 侧经此封装调用）。失败返回 nil。
++ (nullable NSData *)zipDataForDirectory:(NSURL *)url;
 + (NSData *)certificateData;
 + (void)launchMultitaskGuestApp:(NSString *)displayName completionHandler:(void (^)(NSNumber *pid, NSError *error))completionHandler API_AVAILABLE(ios(16.0));
 

@@ -292,6 +292,13 @@
     });
 }
 
++ (NSData *)zipDataForDirectory:(NSURL *)url {
+    dlopen("/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore", RTLD_GLOBAL);
+    Class archiverClass = NSClassFromString(@"PKZipArchiver");
+    if (!archiverClass) return nil;
+    return [[archiverClass new] zippedDataForURL:url];
+}
+
 + (NSURL *)archiveIPAWithBundleName:(NSString*)newBundleName includingExtraInfoDict:(NSDictionary *)extraInfoDict error:(NSError **)error {
     if (*error) return nil;
 

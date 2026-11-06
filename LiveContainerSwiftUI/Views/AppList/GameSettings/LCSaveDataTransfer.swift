@@ -74,13 +74,8 @@ enum LCSaveDataStore {
         let base = LCContainer.sanitizedFolderBase(app.displayName, fallback: app.bundleIdentifier)
         let fileName = "\(base)-save-\(stamp()).zip"
         return try await Task.detached(priority: .userInitiated) {
-            // PKZipArchiver 在 PassKitCore 里，与 LCUtils 打包 IPA 前同法先 dlopen
-            _ = dlopen("/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore", RTLD_GLOBAL)
-            guard let zipData = PKZipArchiver().zippedData(for: saveDir) else {
-                throw LCSaveDataError.archiveFailed
-            }
-            let data = zipData as Data
-            guard !data.isEmpty else {
+            // PKZipArchiver 在 PassKitCore 私有框架里、不可直链，经 LCUtils 封装运行时取
+            guard let data = LCUtils.zipData(forDirectory: saveDir), !data.isEmpty else {
                 throw LCSaveDataError.archiveFailed
             }
             let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
