@@ -208,13 +208,27 @@ class LCAppModel: ObservableObject, Hashable {
     /// 表现就是设置/数据包状态整页停在旧容器上。打开设置页前调它对齐到记录，
     /// 与 runApp 读的 uiSelectedContainer 同源同值。
     func refreshContainerSelection() {
-        uiContainers = appInfo.containers
-        uiDefaultDataFolder = appInfo.dataUUID
-        if let uuid = appInfo.dataUUID,
-           let match = uiContainers.first(where: { $0.folderName == uuid }) {
-            uiSelectedContainer = match
+        // 赋值全部带变更守卫：名单按 folderName 序列判变、选中按 folderName
+        // 判同。对齐完成后重复调用是零发布的空转——这样数据包就绪的共用
+        // 求值入口（LCGameLibraryInfo.datapackReady）敢在视图求值期先调它
+        // 对齐，不会每次 body 重跑都写 @Published 引发更新风暴；终态与无
+        // 守卫版逐项一致（名单换过时选中从新名单里重取实例，保同源）。
+        let containers = appInfo.containers
+        let defaultFolder = appInfo.dataUUID
+        let listChanged = uiContainers.map(\.folderName) != containers.map(\.folderName)
+        if listChanged {
+            uiContainers = containers
+        }
+        if uiDefaultDataFolder != defaultFolder {
+            uiDefaultDataFolder = defaultFolder
+        }
+        if let uuid = defaultFolder,
+           let match = containers.first(where: { $0.folderName == uuid }) {
+            if listChanged || uiSelectedContainer?.folderName != match.folderName {
+                uiSelectedContainer = match
+            }
         } else if let current = uiSelectedContainer,
-                  !uiContainers.contains(where: { $0.folderName == current.folderName }) {
+                  !containers.contains(where: { $0.folderName == current.folderName }) {
             // 快照里的选中容器已不在名单内：清掉，defaultContainer 回退名单首个
             uiSelectedContainer = nil
         }
