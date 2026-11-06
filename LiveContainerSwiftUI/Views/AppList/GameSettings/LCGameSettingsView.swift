@@ -380,6 +380,9 @@ struct LCGameSettingsView: View {
                             } message: {
                                 Text("所选内容不是有效的图片，或保存失败，请换一张再试。")
                             }
+                        // 存档导入/导出组：存档目录（Documents/save）不存在时
+                        // 子视图自隐（判据与依据见 LCSaveDataTransfer.swift 文件头）
+                        LCSaveDataSectionView(app: app)
                         if hasProfile, prefs != nil, hasSavedValues {
                             resetRow
                         }
