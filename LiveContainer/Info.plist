@@ -67,6 +67,8 @@
 	</array>
 	<key>GCSupportsControllerUserInteraction</key>
 	<true/>
+	<key>GCSupportsGameMode</key>
+	<true/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.education</string>
 	<key>LSApplicationQueriesSchemes</key>
@@ -76,6 +78,8 @@
 		<string>gamecase2</string>
 		<string>gamecase3</string>
 	</array>
+	<key>LSSupportsGameMode</key>
+	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NFCReaderUsageDescription</key>
