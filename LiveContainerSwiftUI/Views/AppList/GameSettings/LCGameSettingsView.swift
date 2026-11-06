@@ -386,8 +386,8 @@ struct LCGameSettingsView: View {
                         // 存档导入/导出组：存档目录（Documents/save）不存在时
                         // 子视图自隐（判据与依据见 LCSaveDataTransfer.swift 文件头）
                         LCSaveDataSectionView(app: app)
-                        // Mod 组（只读）：当前生效的 mod 名单，无容器时子视图
-                        // 自隐（判据与维护机制见 LCGameMods.swift 文件头）
+                        // Mod 组：名单 + 导入 + 管理（启停 / 排序 / 删除），
+                        // 无容器时子视图自隐（判据与维护机制见 LCGameMods.swift 文件头）
                         LCGameModsSectionView(app: app, refreshToken: statusRefresh)
                         if hasProfile, prefs != nil, hasSavedValues {
                             resetRow
