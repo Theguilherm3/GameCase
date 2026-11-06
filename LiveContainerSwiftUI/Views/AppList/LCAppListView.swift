@@ -90,6 +90,10 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     /// 派生状态——弹层里改了封面文件 / romfs.img 后若没人通知它，它的 body
     /// 不会重跑，大图、卡片、状态点就停在旧结果上（真机实测：要重进才变）。
     @State private var libraryRefresh = 0
+    /// 前台回归感知：经「文件」App 手动放 / 删 romfs.img 没有任何 App
+    /// 内事件能 bump 上面的令牌，靠 scenePhase 回到 active 时对齐快照
+    /// + bump 令牌兜底（见 body 的 onChange），不引入轮询
+    @Environment(\.scenePhase) private var scenePhase
     // 设置类页面呈现状态（Phase 22 起三页统一走 LCSidePanelContainer
     // 自适应宿主：横屏 = 右侧面板、竖屏 = 整屏，形态随当前尺寸跟随、
     // 旋转原地变形，不再有 sheet / 面板两套状态按打开时方向二选一）
@@ -312,6 +316,17 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 sharedModel.selectedTab = .apps
                 presentContainerSettings()
             }
+        }
+        .onChange(of: scenePhase) { phase in
+            // App 回到前台：先把全部游戏的容器快照按记录对齐，再 bump
+            // 库刷新令牌——用户在「文件」App 里手动放进 / 删掉的数据包
+            // 在切回 GC 时即按磁盘现状反映到库界面（玩家实证：此前无
+            // 人 bump、也无人对齐，状态长期停在旧值）
+            guard phase == .active else { return }
+            for app in sharedModel.apps + sharedModel.hiddenApps {
+                app.refreshContainerSelection()
+            }
+            libraryRefresh += 1
         }
         // onDismiss 覆盖全部退出路径（完成 / 取消 / 下滑）：导入成败、取消都要
         // 让主页按磁盘现状重算数据包状态——导入视图的 onFinished 只挂在「完成」
@@ -1591,6 +1606,18 @@ enum LCGameLibraryInfo {
         }
         let romfsURL = container.containerURL.appendingPathComponent("Documents/romfs.img")
         return FileManager.default.fileExists(atPath: romfsURL.path)
+    }
+
+    /// 数据包就绪的共用求值入口：先按 appInfo 记录对齐容器快照（与
+    /// Phase 7 设置页 loadState 同方），再解析容器求值。全部就绪读数
+    /// （库主页卡片 / 状态点、游戏设置页、数据包导入页复核）都走这里，
+    /// 不再各自拿快照直查——快照与记录脱钩时直查读的是错误容器：包
+    /// 已放进实际启动的容器、游戏能跑，库界面却对着另一个空容器长期
+    /// 报「缺数据包」（玩家实证）。refreshContainerSelection 带变更
+    /// 守卫，对齐后重复调用零发布，求值期调用安全收敛。
+    static func datapackReady(for app: LCAppModel) -> Bool {
+        app.refreshContainerSelection()
+        return isDatapackReady(container: defaultContainer(for: app))
     }
 
     /// 读默认容器偏好 plist 里的按键皮肤设置并映射为显示名；无皮肤档案的游戏返回 nil（卡上只显示通用信息）

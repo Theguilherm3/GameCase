@@ -266,9 +266,12 @@ struct LCGameHomeView: View {
     }
 
     private func datapackReady(_ app: LCAppModel) -> Bool {
-        // 读 refreshToken 把依赖写明：令牌变化时状态点随 body 按磁盘重算
+        // 读 refreshToken 把依赖写明：令牌变化时状态点随 body 按磁盘重算。
+        // 求值走共用入口：先按记录对齐容器快照再查 romfs.img——手动经
+        // 「文件」App 放的包没有任何 App 内事件来对齐快照，直查快照会
+        // 停在错误容器上长期报缺失（玩家实证，本次修复点）。
         _ = refreshToken
-        return LCGameLibraryInfo.isDatapackReady(container: LCGameLibraryInfo.defaultContainer(for: app))
+        return LCGameLibraryInfo.datapackReady(for: app)
     }
 
     /// 「最近游玩」排序：lastLaunched 倒序，从未启动过的排后面
@@ -342,6 +345,12 @@ struct LCGameHomeView: View {
         }
         .ignoresSafeArea()
         .onAppear {
+            // 页面出现先把全部游戏的容器快照按记录对齐：主页的状态点
+            // 求值虽走共用入口（内含对齐），这里先行一步让封面 / 时长等
+            // 其余读快照的面与状态点同口径
+            for app in apps {
+                app.refreshContainerSelection()
+            }
             ensureFocus()
             landscapeOrderKeys = apps.map { key(of: $0) }
             // 游玩时长补结（Phase 18）：主页出现 = 此刻没有客体在本进程跑，

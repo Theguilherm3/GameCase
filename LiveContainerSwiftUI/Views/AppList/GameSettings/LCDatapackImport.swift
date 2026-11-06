@@ -79,6 +79,13 @@ struct LCDatapackImportView: View {
         .navigationViewStyle(StackNavigationViewStyle())
         .preferredColorScheme(.dark)
         .onAppear {
+            // 本页的写侧解析（existingDatapackSize / startCopy / 文件夹
+            // 导入）与读侧复核共用 defaultContainer 的同一份快照：出现
+            // 先按记录对齐全部候选游戏，免得快照脱钩时包写进与启动、
+            // 状态读数不一致的容器
+            for app in apps {
+                app.refreshContainerSelection()
+            }
             if target == nil {
                 target = request.app
             }
@@ -642,7 +649,8 @@ struct LCDatapackImportView: View {
     }
 
     private func datapackStatusText(for app: LCAppModel) -> some View {
-        let ready = LCGameLibraryInfo.isDatapackReady(container: LCGameLibraryInfo.defaultContainer(for: app))
+        // 走共用求值入口（先对齐快照再解析容器），与库主页同一口径
+        let ready = LCGameLibraryInfo.datapackReady(for: app)
         return HStack(spacing: 6) {
             Circle()
                 .fill(ready ? Color.green : Color.gray)

@@ -743,7 +743,9 @@ struct LCGameSettingsView: View {
 
     private var datapackReady: Bool {
         _ = statusRefresh
-        return LCGameLibraryInfo.isDatapackReady(container: container)
+        // 走共用求值入口（先对齐快照再解析容器），与库主页同一口径；
+        // 本页 loadState 的对齐保留——container 属性还供偏好读写等他处用
+        return LCGameLibraryInfo.datapackReady(for: app)
     }
 
     private var gameInfoSection: some View {
