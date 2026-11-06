@@ -114,6 +114,109 @@ class LCContainer : ObservableObject, Hashable {
         return "Game"
     }
 
+    /// 容器夹是否只是「空壳」：递归枚举后，除骨架空目录、顶层的
+    /// LCContainerInfo.plist、以及 LCBootstrap 给每个容器 HOME 建的顶层
+    /// tmp 软链之外，没有任何普通文件或其它软链。存档、数据包、偏好
+    /// plist 等任何真实内容都会让判定不成立。夹不存在返回 false。
+    /// 用途有二：旧形态记录收敛时判旧夹是否值得原样收编；孤儿清扫时
+    /// 判未被引用的夹是否可删。两处都按「拿不准就当有内容」的保守
+    /// 方向（枚举失败同样返回 false）。
+    static func isEmptyContainerShell(at url: URL) -> Bool {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+            return false
+        }
+        guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey], options: []) else {
+            return false
+        }
+        let rootPath = url.path
+        for case let item as URL in enumerator {
+            guard item.path.hasPrefix(rootPath + "/") else {
+                return false
+            }
+            let rel = String(item.path.dropFirst(rootPath.count + 1))
+            guard let values = try? item.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]) else {
+                return false
+            }
+            if values.isSymbolicLink == true {
+                // 骨架的一部分：LCBootstrap 建的顶层 tmp 软链；其余软链
+                // 一律按有内容处理（可能指向真实数据）
+                if rel == "tmp" {
+                    continue
+                }
+                return false
+            }
+            if values.isDirectory == true {
+                continue
+            }
+            if values.isRegularFile == true, rel == "LCContainerInfo.plist" {
+                continue
+            }
+            return false
+        }
+        return true
+    }
+
+    /// 某夹名的容器夹在磁盘上是否存在且装有真实内容（非空壳）
+    static func folderHasRealContent(folderName: String, isShared: Bool) -> Bool {
+        let root = isShared ? LCPath.lcGroupDataPath : LCPath.dataPath
+        let url = root.appendingPathComponent(folderName)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+            return false
+        }
+        return !isEmptyContainerShell(at: url)
+    }
+
+    /// 清扫孤儿容器空壳：两个数据根下不被任何应用的容器记录引用、且
+    /// 只是空壳（只有骨架空目录与 LCContainerInfo.plist、无任何真实
+    /// 文件）的目录。历史时序里一次性生成的孤儿夹（如旧时序留下的
+    /// UUID 空壳）不在任何记录里，卸载按记录删夹够不着，靠启动对账
+    /// 与卸载后顺带清扫回收。删除条件严格同时成立才动手：未被引用
+    /// （全部应用的容器名单 ∪ dataUUID）且空壳判定通过——装有
+    /// romfs.img、存档、偏好等任何真实内容的目录一律不碰。
+    /// 返回实际删除的夹名，供调用方同步文件夹名单。
+    static func sweepOrphanContainerShells(apps: [LCAppModel]) -> [String] {
+        var referenced = Set<String>()
+        for app in apps {
+            for container in app.appInfo.containers {
+                referenced.insert(container.folderName)
+            }
+            if let dataUUID = app.appInfo.dataUUID {
+                referenced.insert(dataUUID)
+            }
+        }
+        let fm = FileManager.default
+        var removed: [String] = []
+        var roots = [LCPath.dataPath]
+        if LCPath.lcGroupDataPath != LCPath.dataPath {
+            roots.append(LCPath.lcGroupDataPath)
+        }
+        for root in roots {
+            guard let entries = try? fm.contentsOfDirectory(atPath: root.path) else {
+                continue
+            }
+            for name in entries {
+                guard !referenced.contains(name) else {
+                    continue
+                }
+                let url = root.appendingPathComponent(name)
+                guard isEmptyContainerShell(at: url) else {
+                    continue
+                }
+                do {
+                    try fm.removeItem(at: url)
+                    removed.append(name)
+                    NSLog("[GC] removed orphan container shell: \(name)")
+                } catch {
+                    NSLog("[GC] failed to remove orphan container shell \(name): \(error)")
+                }
+            }
+        }
+        return removed
+    }
+
     init(folderName: String, name: String, isShared : Bool, isolateAppGroup: Bool = false, spoofIdentifierForVendor: Bool = false, bookmarkData: Data? = nil, resolvedContainerURL: URL? = nil) {
         self.folderName = folderName
         self.name = name
@@ -238,11 +341,32 @@ extension LCAppInfo {
             }
             
             var upgrade = false
-            // upgrade
+            // upgrade：只有 LCDataUUID、没有容器名单的旧形态记录（上游老
+            // 版本形态，覆盖安装会原样继承）在此收敛出默认容器。
+            // 旧实现直接拿 dataUUID 当夹名：dataUUID 停留在旧式 UUID 值时，
+            // 它与首启正路（runApp 用 generateFolderName 生成游戏名夹）会
+            // 在同一游戏上各建一夹——UUID 空壳 + 游戏名真身（双目录 bug）。
+            // 收敛规则与正路对齐，二选一：
+            // - dataUUID 命名的夹已在磁盘上且装有真实内容 → 原样收编，
+            //   老数据不丢、夹名与 dataUUID 都不变；
+            // - 其余（夹不存在或只是空壳）→ 按游戏名生成夹名，并先把
+            //   dataUUID 改写为该名再写容器名单（两个 setter 各自落盘，
+            //   先改 dataUUID 是让中间态也可被本垫片幂等重入收敛），
+            //   此后模型快照、启动、LCBootstrap 与深链扩展读到的默认
+            //   容器恒为同一个游戏名夹。
             if let oldDataUUID = dataUUID, containerInfo == nil {
+                let convergedName: String
+                if LCContainer.folderHasRealContent(folderName: oldDataUUID, isShared: isShared) {
+                    convergedName = oldDataUUID
+                } else {
+                    convergedName = LCContainer.generateFolderName(displayName: displayName(), bundleIdentifier: bundleIdentifier(), siblingFolderNames: [])
+                }
+                if convergedName != oldDataUUID {
+                    dataUUID = convergedName
+                }
                 containerInfo = [[
-                    "folderName": oldDataUUID,
-                    "name": oldDataUUID
+                    "folderName": convergedName,
+                    "name": convergedName
                 ]]
                 upgrade = true
             }

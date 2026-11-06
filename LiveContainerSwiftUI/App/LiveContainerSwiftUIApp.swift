@@ -90,6 +90,14 @@ struct LiveContainerSwiftUIApp : SwiftUI.App {
             NSLog("[LC] error:\(error)")
         }
         
+        // 孤儿容器空壳清扫（启动对账）：不被任何应用记录引用、且没有
+        // 任何真实文件的空壳目录在此回收（历史一次性孤儿，卸载按记录
+        // 删夹够不着）；被引用或有内容的目录一律不动。结果同步进名单。
+        let sweptShells = LCContainer.sweepOrphanContainerShells(apps: tempApps + tempHiddenApps)
+        if !sweptShells.isEmpty {
+            tempAppDataFolderNames.removeAll { sweptShells.contains($0) }
+        }
+
         DataManager.shared.model.apps = tempApps
         DataManager.shared.model.arm32EmuApps = tempArm32EmuApps
         DataManager.shared.model.hiddenApps = tempHiddenApps

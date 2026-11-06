@@ -1135,6 +1135,14 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                     sharedModel.appDataFolderNames.removeAll { $0 == dataUUID }
                 }
             }
+            // 顺带清扫孤儿空壳：该游戏若有不在任何记录里的历史孤儿夹，
+            // 上面的按记录删夹够不着；它不被任何应用记录引用，满足空壳
+            // 条件即一并回收。有真实内容的目录（含本游戏保留数据的
+            // 容器）一律不动。
+            let sweptShells = LCContainer.sweepOrphanContainerShells(apps: sharedModel.apps + sharedModel.hiddenApps)
+            if !sweptShells.isEmpty {
+                sharedModel.appDataFolderNames.removeAll { sweptShells.contains($0) }
+            }
         } catch {
             errorInfo = error.localizedDescription
             errorShow = true
