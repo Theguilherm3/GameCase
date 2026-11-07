@@ -31,6 +31,14 @@
 //  写者。两行口径相同：都由容器目录现状决定、GC 独占维护、玩家手
 //  写同名行在下次启动被维护结果覆盖。
 //
+//  云存档的 DM_SAVE_SYNC 行同样搭这条通道（LCGameCloudSaves，候选
+//  B 复刻 NX2 壳通道）：同一次维护里排在 DM_CHEATS 之后第三个处
+//  理——值由 GC 保管的书签现解析（开启且可解析才给所选文件夹路
+//  径、并在 GC 进程内持有该文件夹的 security scope；未配置 / 已
+//  关闭 / 书签失效则删行），引擎对 env 已设值优先不覆盖，同步本
+//  体全在引擎内（save_sync），GC 不写任何文件级同步。口径与其余
+//  两行相同：GC 独占维护、手写同名行下次启动被覆盖。
+//
 //  导入与管理（设置页「Mod」组）：导入把所选文件夹按扫描同规则校验
 //  后 staging 换入 Documents/mods/；管理动作（启停 / 排序 / 删除）只
 //  动 mods 本层的文件夹与顺序记录，绝不直接写 env.txt——一切效果都
@@ -308,12 +316,15 @@ enum LCGameMods {
 
     // MARK: env.txt 维护
 
-    /// 按容器当前 mods / cheats 现状、同一次维护里顺序维护其
-    /// Documents/env.txt 的两行：先 DM_ROMFS_OVERLAY（mods 现算，
-    /// 无可用 mod 删行）、后 DM_CHEATS（cheats 夹内有文件名合规的
-    /// .txt 才写 cheats、否则删行，判据见 LCGameCheats）。两行共用
-    /// maintainEnvLine 这一个写者，他行逐字保留。维护失败静默吞
-    /// 掉：mod / 金手指都只是增强，绝不能挡游戏启动。
+    /// 按容器当前 mods / cheats 现状与云存档配置、同一次维护里顺
+    /// 序维护其 Documents/env.txt 的三行：先 DM_ROMFS_OVERLAY
+    /// （mods 现算，无可用 mod 删行）、次 DM_CHEATS（cheats 夹内有
+    /// 文件名合规的 .txt 才写 cheats、否则删行，判据见
+    /// LCGameCheats）、后 DM_SAVE_SYNC（云存档书签现解析，开启且
+    /// 可解析才写所选文件夹路径、否则删行，判据与 scope 持有见
+    /// LCGameCloudSaves）。三行共用 maintainEnvLine 这一个写者，他
+    /// 行逐字保留。维护失败静默吞掉：mod / 金手指 / 云存档都只是
+    /// 增强，绝不能挡游戏启动。
     static func refreshEnvOverlay(container: LCContainer, bundleIdentifier: String) {
         guard let titleID = titleID(bundleIdentifier: bundleIdentifier) else { return }
         let documents = container.containerURL.appendingPathComponent("Documents")
@@ -321,6 +332,7 @@ enum LCGameMods {
         let overlay = overlayValue(in: documents.appendingPathComponent("mods", isDirectory: true), titleID: titleID)
         maintainEnvLine(envFile: envFile, key: envKey, value: overlay)
         maintainEnvLine(envFile: envFile, key: LCGameCheats.envKey, value: LCGameCheats.cheatsEnvValue(in: documents))
+        maintainEnvLine(envFile: envFile, key: LCGameCloudSaves.envKey, value: LCGameCloudSaves.envValue(forBundleIdentifier: bundleIdentifier))
     }
 
     /// 启动漏斗入口：容器取 runApp 即将启动的那一个（与

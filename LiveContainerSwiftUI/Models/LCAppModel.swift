@@ -367,7 +367,8 @@ class LCAppModel: ObservableObject, Hashable {
         UserDefaults.standard.set(uiSelectedContainer?.folderName, forKey: "selectedContainer")
 
         // 启动 env 维护：按将启动容器的现状重算 DM_ROMFS_OVERLAY
-        // （Documents/mods）与 DM_CHEATS（Documents/cheats）两行、行
+        // （Documents/mods）、DM_CHEATS（Documents/cheats）与
+        // DM_SAVE_SYNC（云存档书签，见 LCGameCloudSaves）三行、行
         // 级维护进该容器 Documents/env.txt（客体 boot 时自读），与
         // 下方游玩时长打戳同处漏斗——已越过全部早退分支、派发在
         // 即，每次启动现算，玩家在文件 App 增删 mod / 金手指后下次

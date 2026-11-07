@@ -19,9 +19,9 @@
 //
 //  env 维护与 Mod 共用单一写者：LCGameMods.maintainEnvLine 是 env.txt
 //  的唯一行级写者，LCGameMods.refreshEnvOverlay 在同一次维护里先处
-//  理 DM_ROMFS_OVERLAY、再处理 DM_CHEATS（顺序处理、他行逐字保
-//  留）：Documents/cheats/ 内存在至少一个文件名合规的 .txt 时写
-//  DM_CHEATS=cheats，否则删行。不写 DM_CHEATS_ON / DM_CHEATS_DEBUG
+//  理 DM_ROMFS_OVERLAY、再处理 DM_CHEATS、最后处理云存档的
+//  DM_SAVE_SYNC（顺序处理、他行逐字保留）：Documents/cheats/ 内存在
+//  至少一个文件名合规的 .txt 时写 DM_CHEATS=cheats，否则删行。不写 DM_CHEATS_ON / DM_CHEATS_DEBUG
 //  （开关走 .enabled 约定，调试开关留给玩家手写）。
 //  与 env 锁定逻辑的关系同 DM_ROMFS_OVERLAY（见 LCGameMods.swift
 //  文件头）：LCGameProfile.envLockedValues 会把这行认作 env 固定键

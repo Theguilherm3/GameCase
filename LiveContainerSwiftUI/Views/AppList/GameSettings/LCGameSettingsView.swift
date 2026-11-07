@@ -412,6 +412,10 @@ struct LCGameSettingsView: View {
                         // 存档导入/导出组：存档目录（Documents/save）不存在时
                         // 子视图自隐（判据与依据见 LCSaveDataTransfer.swift 文件头）
                         LCSaveDataSectionView(app: app)
+                        // 云存档组：选 iCloud Drive 文件夹 + 书签保管，
+                        // 启动前经 env 维护把路径递给引擎自带 save_sync
+                        //（候选 B，有容器才显示，见 LCGameCloudSaves.swift 文件头）
+                        LCGameCloudSavesSectionView(app: app, refreshToken: statusRefresh)
                         // Mod 组：名单 + 导入 + 管理（启停 / 排序 / 删除），
                         // 无容器时子视图自隐（判据与维护机制见 LCGameMods.swift 文件头）
                         LCGameModsSectionView(app: app, refreshToken: statusRefresh)
