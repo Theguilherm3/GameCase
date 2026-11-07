@@ -286,7 +286,9 @@ struct LCDatapackImportView: View {
 
     private var existingDatapackSize: Int64 {
         guard let target, let container = LCGameLibraryInfo.defaultContainer(for: target) else { return 0 }
-        let url = container.containerURL.appendingPathComponent("Documents/romfs.img")
+        // 走统一探测：现存镜像可能是任意大小写（RomFS.img 等），
+        // 拼写死小写路径会漏认、跳过覆盖确认
+        guard let url = LCGameLibraryInfo.probeDatapack(container: container).imageFile else { return 0 }
         return Self.fileSize(url)
     }
 
@@ -515,7 +517,7 @@ struct LCDatapackImportView: View {
         guard let target, let container = LCGameLibraryInfo.defaultContainer(for: target) else { return false }
         let documents = container.containerURL.appendingPathComponent("Documents")
         let fm = FileManager.default
-        if plan.romfs != nil, fm.fileExists(atPath: documents.appendingPathComponent("romfs.img").path) {
+        if plan.romfs != nil, LCGameLibraryInfo.probeDatapack(container: container).imageEntry != nil {
             return true
         }
         if plan.aocDirectory != nil, fm.fileExists(atPath: documents.appendingPathComponent("aoc").path) {
