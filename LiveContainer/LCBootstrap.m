@@ -884,8 +884,8 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     [_tongueContent addSubview:_gamepadView];
     [_tongueContent addSubview:_chevronView];
 
-    // 展开栏：横向胶囊，B 档收窄（183→143）——删纯装饰的握把+分隔线整段，
-    // 胶囊左距 12、内边距 9/10、房子图标 17；收起钮视觉 28、命中域 44×46。
+    // 展开栏：横向胶囊，B 档收窄后总宽 138——删纯装饰的握把+分隔线整段，
+    // 胶囊左/上/下三边距同为 7、内边距 9/10、房子图标 17；收起钮视觉 28、命中域 44×46。
     // 触摸层盖在整栏最上层：栏身任意处可拖；轻点由处理器按落点分发到
     // 胶囊（回库）/收起钮（收起），两钮只作视觉、不拦截触摸。
     UIView *barContent = nil;
@@ -904,7 +904,7 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     CGFloat textWidth = ceil([@"游戏库" sizeWithAttributes:@{NSFontAttributeName: labelFont}].width);
     CGFloat pillWidth = 9 + 17 + 6 + textWidth + 10;
     UIButton *pill = [UIButton buttonWithType:UIButtonTypeCustom];
-    pill.frame = CGRectMake(12, (LCQBBarHeight - 32) / 2, pillWidth, 32);
+    pill.frame = CGRectMake(7, (LCQBBarHeight - 32) / 2, pillWidth, 32);
     pill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.13];
     pill.layer.cornerRadius = 16;
     pill.layer.borderWidth = 1;
@@ -923,14 +923,14 @@ static void *LCQBWindowBoundsContext = &LCQBWindowBoundsContext;
     _pillButton = pill;
 
     UIButton *collapse = [UIButton buttonWithType:UIButtonTypeCustom];
-    collapse.frame = CGRectMake(12 + pillWidth, 0, 44, LCQBBarHeight);
+    collapse.frame = CGRectMake(7 + pillWidth, 0, 44, LCQBBarHeight);
     collapse.userInteractionEnabled = NO;
     [_barContent addSubview:collapse];
     _collapseButton = collapse;
 
     [_barContent addSubview:barTouch];
 
-    _barWidth = 12 + pillWidth + 44;
+    _barWidth = 7 + pillWidth + 44;
 }
 
 #pragma mark 持久化
