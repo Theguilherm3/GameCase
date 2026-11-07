@@ -20,6 +20,17 @@
 //  按键布局入口已临时下架（Phase 21）：编辑页与布局数据留在仓里，
 //  后续调整好再恢复入口；已保存的自定义布局仍由客体引擎读取生效。
 //
+//  Phase 29（滑动掉帧修复，用户 2026-11-07 真机报）：滚动时头部背景
+//  的 GeometryReader 逐帧把 minY 回写本页 @State（Phase 28 出血条
+//  耦合），整页 body 逐帧重算——而 body 求值路径上全是现算的磁盘
+//  活：封面解析每次现读现解码整幅 1920×1080（bannerResolution 自
+//  注「不做缓存」）、游戏状态每次枚举容器目录 + 读 romfs.id、日志
+//  大小每次取文件属性，且各被读 3–4 次。修法两条、呈现零改：①滚动
+//  位置改走引用模型 LCSettingsHeaderScroll，出血条拆成独立子视图
+//  单独订阅，逐帧只重排它自己；②封面 / 状态 / 日志大小改为事件驱
+//  动的 @State 缓存（coverRefresh / statusRefresh 变化时各重算一
+//  次），body 只读缓存。
+//
 
 import SwiftUI
 import UIKit
@@ -29,6 +40,13 @@ import UniformTypeIdentifiers
 private struct LCCoverCropItem: Identifiable {
     let id = UUID()
     let image: UIImage
+}
+
+/// 封面头滚动位置的传递模型（Phase 29）：头部量测逐帧写、页面根
+/// 出血条逐帧读；走引用模型使这两处都不经设置页 body——写方写它
+/// 不触发本页重算，读方（LCSettingsTopBleed）单独订阅重排。
+private final class LCSettingsHeaderScroll: ObservableObject {
+    @Published var originY: CGFloat = 0
 }
 
 /// NX ShellPalette 的逐值移植（Phase 17）：页底 / 卡面 / 奶油 / 就绪绿 /
@@ -294,7 +312,14 @@ struct LCGameSettingsView: View {
     @State private var confirmReset = false
     @State private var headerWidth: CGFloat = 0 // 封面头实测宽（NX PaneBanner 同法，背景 GeometryReader 回填）
     @State private var headerHeight: CGFloat = 0 // 封面头实测高（Phase 28：页面根出血条的帧高 = 本值 + topInset）
-    @State private var headerOriginY: CGFloat = 0 // 封面头在页面坐标系里的 minY（静止 0、上滚为负；Phase 28 出血条随滚动耦合）
+    // 封面头滚动位置（Phase 29 改走引用模型，见类注）：逐帧回写不再进本页 @State
+    @StateObject private var headerScroll = LCSettingsHeaderScroll()
+    // 事件驱动缓存（Phase 29）：封面解析 / 游戏状态 / 日志大小原先在
+    // body 里现算（磁盘读 + 整图解码 + 目录枚举），现只在 coverRefresh /
+    // statusRefresh 变化时各重算一次，body 只读这三份缓存
+    @State private var coverCache: (image: UIImage?, source: LCGameLibraryInfo.BannerSource) = (nil, .icon)
+    @State private var stateCache: LCGameState = .needsDatapack
+    @State private var logSizeCache: Int64?
 
     // 自定义封面流程（选图 → 16:9 裁剪 → 存宿主 Documents/CustomCovers）
     @State private var coverRefresh = 0 // 换/删自定义封面后 bump，刷新本页封面头与封面行
@@ -436,6 +461,15 @@ struct LCGameSettingsView: View {
                 self.coverRefresh += 1
             }
         }
+        // Phase 29：两计数器是本页既有的刷新信号（进页 / 导入关页 /
+        // 换封面 / 联网封面抓到），缓存重算统一挂在它们的变化上，各一次
+        .onChange(of: coverRefresh) { _ in
+            coverCache = LCGameLibraryInfo.bannerResolution(for: app.appInfo)
+        }
+        .onChange(of: statusRefresh) { _ in
+            stateCache = LCGameLibraryInfo.gameState(for: app)
+            logSizeCache = LCGameLibraryInfo.guestLogSize(for: app)
+        }
         // onDismiss 覆盖导入页的全部退出路径：原先刷新只挂在导入视图的
         // onFinished 上，而它仅由「完成」钮触发——用工具栏「取消」或下滑关页
         // 时状态行不重算（导入失败 / 取消同理要回到与磁盘一致的状态）。
@@ -503,7 +537,7 @@ struct LCGameSettingsView: View {
     /// 的设计位置）。横屏面板 topInset = 0：offset 与 extraTop
     /// 皆 0、出血条不渲染，逐点同现行。
     private var coverHeader: some View {
-        let resolution = coverResolution
+        let resolution = coverCache
         let hasBanner = resolution.source != .icon
         let width = headerWidth > 0 ? headerWidth : 430
         let bannerHeight = hasBanner ? min(width * 9 / 16, 220) : 64.0
@@ -519,7 +553,7 @@ struct LCGameSettingsView: View {
             // 总高经 extraTop 同步加 topInset，图像映射与 NX 一致；
             // 安全线以上一段被 ScrollView 视口裁掉，由页面根的
             // coverTopBleed 同映射补画（Phase 28，见头部注）
-            headerBackdrop(image: resolution.image, hasBanner: hasBanner, topInset: topInset, extraTop: topInset)
+            LCSettingsHeaderBackdrop(image: resolution.image, hasBanner: hasBanner, topInset: topInset, extraTop: topInset)
                 .offset(y: -topInset)
         }
         .background {
@@ -528,35 +562,36 @@ struct LCGameSettingsView: View {
                     .onAppear {
                         headerWidth = geo.size.width
                         headerHeight = geo.size.height
-                        headerOriginY = geo.frame(in: .named(Self.pageCoordinateSpace)).minY
+                        headerScroll.originY = geo.frame(in: .named(Self.pageCoordinateSpace)).minY
                     }
                     .onChange(of: geo.size.width) { headerWidth = $0 }
                     .onChange(of: geo.size.height) { headerHeight = $0 }
-                    .onChange(of: geo.frame(in: .named(Self.pageCoordinateSpace)).minY) { headerOriginY = $0 }
+                    // 逐帧滚动位置只写引用模型（Phase 29），不回本页 @State
+                    .onChange(of: geo.frame(in: .named(Self.pageCoordinateSpace)).minY) { headerScroll.originY = $0 }
             }
         }
     }
 
-    /// 顶部出血条（Phase 28）：与封面头同体的一份 headerBackdrop，
-    /// 挂在页面根 ZStack（ScrollView 之外，不受滚动视口裁剪），专
-    /// 画安全线以上那一带。帧高 = 头部实高 + topInset、extraTop
-    /// = 0，绘制总高与头内那份相同（帧高 + 160），图像映射一致；
-    /// 纵向位置 = 头部当前 minY − topInset：静止时其顶落在物理
-    /// 顶，上滚时与头内背景同速同向移动（头内背景在安全线处显
-    /// 出的图像行与本条下缘严丝合缝，推导：两者在窗口坐标里的
-    /// 绘制原点恒为同一值 headerOriginY − topInset）。topInset
-    /// = 0（横屏面板形态）时不渲染、逐点同现行；无横图（图标模
-    /// 糊兜底）时同体背景同样出血。不拦截触摸。
-    @ViewBuilder
+    /// 顶部出血条（Phase 28 形态，Phase 29 拆独立子视图
+    /// LCSettingsTopBleed）：与封面头同体的一份封面背景，挂在页面
+    /// 根 ZStack（ScrollView 之外，不受滚动视口裁剪），专画安全线
+    /// 以上那一带。帧高 = 头部实高 + topInset、extraTop = 0，绘制
+    /// 总高与头内那份相同（帧高 + 160），图像映射一致；纵向位置
+    /// = 头部当前 minY − topInset：静止时其顶落在物理顶，上滚时
+    /// 与头内背景同速同向移动（头内背景在安全线处显出的图像行与
+    /// 本条下缘严丝合缝，推导：两者在窗口坐标里的绘制原点恒为同
+    /// 一值 minY − topInset）。minY 经 LCSettingsHeaderScroll 传
+    /// 递（Phase 29），逐帧只重排出血条子视图。topInset = 0（横
+    /// 屏面板形态）时不渲染、逐点同现行；无横图（图标模糊兜底）
+    /// 时同体背景同样出血。不拦截触摸。
     private var coverTopBleed: some View {
-        let topInset = LCSidePanelSpec.windowTopSafeInset
-        if topInset > 0, headerHeight > 0 {
-            let resolution = coverResolution
-            headerBackdrop(image: resolution.image, hasBanner: resolution.source != .icon, topInset: topInset, extraTop: 0)
-                .frame(height: headerHeight + topInset)
-                .offset(y: headerOriginY - topInset)
-                .allowsHitTesting(false)
-        }
+        LCSettingsTopBleed(
+            scroll: headerScroll,
+            image: coverCache.image,
+            hasBanner: coverCache.source != .icon,
+            headerHeight: headerHeight,
+            topInset: LCSidePanelSpec.windowTopSafeInset
+        )
     }
 
     /// 信息簇的排布（NX PaneBanner.words / cluster）：有横图 = 仅信息簇；
@@ -643,70 +678,6 @@ struct LCGameSettingsView: View {
         .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
     }
 
-    /// NX PaneBanner.background 移植：底图按头部实高 +160 绘制（向下
-    /// 溢出垫进内容区）、整体罩 NX 的渐隐 mask。有横图：原图 +
-    /// 压暗渐变（clear@0.3 → 黑 0.4@0.6 → 黑 0.55@1）；无横图：
-    /// 图标自体放大 1.4 + blur 40 + saturation 1.2 + 黑 0.38 叠加。
-    /// mask stops：黑@0 / 黑@0.45 / 黑 0.55@0.68 / 黑 0.18@0.85 / clear@1。
-    /// 状态栏 scrim（Phase 26 补回，NX 原规格）：叠在图层之上、mask
-    /// 之内，topInset > 0 时黑 0.5 → clear、高 topInset + 50，锚在
-    /// 图顶（背景帧已出血到物理顶）——亮封面下状态栏的时钟与电量
-    /// 靠它保可读；NX 结构里此 overlay 盖在图层组全体之上，有 /
-    /// 无横图都生效。
-    /// 绘制总高（Phase 28）：geo 高 + extraTop + 160。两个实例共用
-    /// 本函数且映射恒等——头内实例帧高 = 头部高、extraTop =
-    /// topInset（帧再经 .offset 上移 topInset）；页面根出血条实例
-    /// 帧高 = 头部高 + topInset、extraTop = 0。两者总高同为头部高
-    /// + topInset + 160、绘制原点同为物理顶 + 滚动位移。
-    @ViewBuilder
-    private func headerBackdrop(image: UIImage?, hasBanner: Bool, topInset: CGFloat, extraTop: CGFloat) -> some View {
-        GeometryReader { geo in
-            Group {
-                if hasBanner, let image {
-                    ZStack {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
-                        LinearGradient(stops: [
-                            .init(color: .clear, location: 0.3),
-                            .init(color: .black.opacity(0.4), location: 0.6),
-                            .init(color: .black.opacity(0.55), location: 1),
-                        ], startPoint: .top, endPoint: .bottom)
-                        .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
-                    }
-                } else if let image {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
-                        .scaleEffect(1.4)
-                        .blur(radius: 40)
-                        .saturation(1.2)
-                        .overlay(Color.black.opacity(0.38))
-                } else {
-                    Color.clear
-                }
-            }
-            .frame(width: geo.size.width, height: geo.size.height + extraTop + 160, alignment: .top)
-            .overlay(alignment: .top) {
-                if topInset > 0 {
-                    LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .top, endPoint: .bottom)
-                        .frame(height: topInset + 50)
-                }
-            }
-        }
-        .mask {
-            LinearGradient(stops: [
-                .init(color: .black, location: 0),
-                .init(color: .black, location: 0.45),
-                .init(color: .black.opacity(0.55), location: 0.68),
-                .init(color: .black.opacity(0.18), location: 0.85),
-                .init(color: .clear, location: 1),
-            ], startPoint: .top, endPoint: .bottom)
-        }
-    }
-
     // MARK: 头部以下（NX GameDetailView 的头部块与分组）
 
     /// NX GameDetailView 头部块：说明行（14、白 0.72）+ 状态区；
@@ -758,10 +729,11 @@ struct LCGameSettingsView: View {
     // MARK: 游戏（LC 独有组：NX 无对应，按 NX 行语言适配）
 
     private var datapackReady: Bool {
-        _ = statusRefresh
-        // 走共用求值入口（先对齐快照再解析容器），与库主页同一口径；
-        // 本页 loadState 的对齐保留——container 属性还供偏好读写等他处用
-        return LCGameLibraryInfo.datapackReady(for: app)
+        // Phase 29：改读状态缓存。三态里只有 .needsDatapack 表示「没
+        // 探到任何数据包条目」，与旧二态（探到镜像条目或 romfs 文件
+        // 夹即 true）在全部分支上等价（无容器同为 false）；重算挂在
+        // body 的 .onChange(of: statusRefresh)，求值仍走共用入口
+        stateCache != .needsDatapack
     }
 
     /// 游戏状态（三态，与库主页共用 LCGameLibraryInfo.gameState 解析，
@@ -770,8 +742,10 @@ struct LCGameSettingsView: View {
     /// 读数（两套口径的差异只在损坏态：二态把异常文件也算「在」，
     /// 三态把异常单列已损坏，导入链复核仍走二态、未动）。
     private var gameState: LCGameState {
-        _ = statusRefresh
-        return LCGameLibraryInfo.gameState(for: app)
+        // Phase 29：只读缓存（重算挂在 .onChange(of: statusRefresh)，
+        // 仍走 LCGameLibraryInfo.gameState 共用入口）；此前每次 body
+        // 求值都要枚举容器目录 + 读 romfs.id，且被读 3–4 次
+        stateCache
     }
 
     private var stateColor: Color {
@@ -803,8 +777,8 @@ struct LCGameSettingsView: View {
 
     /// 日志行右侧值：有日志显示大小，无日志（或还没容器）显示「暂无」
     private var logRowValue: String {
-        _ = statusRefresh
-        guard let size = LCGameLibraryInfo.guestLogSize(for: app) else {
+        // Phase 29：大小读缓存（与状态同挂 statusRefresh 重算）
+        guard let size = logSizeCache else {
             return "暂无"
         }
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
@@ -866,10 +840,11 @@ struct LCGameSettingsView: View {
 
     // MARK: 自定义封面（来源/缩略图/选图与保存）
 
-    /// 当前封面解析结果（来源 + 图）：读 coverRefresh 使换图后本行立即刷新
+    /// 当前封面解析结果（来源 + 图）：Phase 29 起只读缓存——解析链
+    /// 每次现读现解码整幅封面，重算挂在 .onChange(of: coverRefresh)，
+    /// 换图后计数器一变缓存即新图，本行随同一次刷新换上
     private var coverResolution: (image: UIImage?, source: LCGameLibraryInfo.BannerSource) {
-        _ = coverRefresh
-        return LCGameLibraryInfo.bannerResolution(for: app.appInfo)
+        coverCache
     }
 
     private var coverHasCustom: Bool {
@@ -1219,5 +1194,101 @@ struct LCGameSettingsView: View {
             values[setting.env] = setting.defaultValue
         }
         currentValues = values
+    }
+}
+
+private struct LCSettingsHeaderBackdrop: View {
+    let image: UIImage?
+    let hasBanner: Bool
+    let topInset: CGFloat
+    let extraTop: CGFloat
+
+/// NX PaneBanner.background 移植：底图按头部实高 +160 绘制（向下
+/// 溢出垫进内容区）、整体罩 NX 的渐隐 mask。有横图：原图 +
+/// 压暗渐变（clear@0.3 → 黑 0.4@0.6 → 黑 0.55@1）；无横图：
+/// 图标自体放大 1.4 + blur 40 + saturation 1.2 + 黑 0.38 叠加。
+/// mask stops：黑@0 / 黑@0.45 / 黑 0.55@0.68 / 黑 0.18@0.85 / clear@1。
+/// 状态栏 scrim（Phase 26 补回，NX 原规格）：叠在图层之上、mask
+/// 之内，topInset > 0 时黑 0.5 → clear、高 topInset + 50，锚在
+/// 图顶（背景帧已出血到物理顶）——亮封面下状态栏的时钟与电量
+/// 靠它保可读；NX 结构里此 overlay 盖在图层组全体之上，有 /
+/// 无横图都生效。
+/// 绘制总高（Phase 28）：geo 高 + extraTop + 160。两个实例共用
+/// 本视图且映射恒等——头内实例帧高 = 头部高、extraTop =
+/// topInset（帧再经 .offset 上移 topInset）；页面根出血条实例
+/// 帧高 = 头部高 + topInset、extraTop = 0。两者总高同为头部高
+/// + topInset + 160、绘制原点同为物理顶 + 滚动位移。
+var body: some View {
+    GeometryReader { geo in
+        Group {
+            if hasBanner, let image {
+                ZStack {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
+                    LinearGradient(stops: [
+                        .init(color: .clear, location: 0.3),
+                        .init(color: .black.opacity(0.4), location: 0.6),
+                        .init(color: .black.opacity(0.55), location: 1),
+                    ], startPoint: .top, endPoint: .bottom)
+                    .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
+                }
+            } else if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
+                    .scaleEffect(1.4)
+                    .blur(radius: 40)
+                    .saturation(1.2)
+                    .overlay(Color.black.opacity(0.38))
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: geo.size.width, height: geo.size.height + extraTop + 160, alignment: .top)
+        .overlay(alignment: .top) {
+            if topInset > 0 {
+                LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: topInset + 50)
+            }
+        }
+    }
+    .mask {
+        LinearGradient(stops: [
+            .init(color: .black, location: 0),
+            .init(color: .black, location: 0.45),
+            .init(color: .black.opacity(0.55), location: 0.68),
+            .init(color: .black.opacity(0.18), location: 0.85),
+            .init(color: .clear, location: 1),
+        ], startPoint: .top, endPoint: .bottom)
+    }
+}
+
+}
+
+/// 页面根出血条（Phase 28 形态、Phase 29 拆为独立子视图）：与封面头
+/// 同体的一份 LCSettingsHeaderBackdrop，挂在页面根（ScrollView 之
+/// 外，不受滚动视口裁剪），专画安全线以上那一带。帧高 = 头部实高
+/// + topInset、extraTop = 0，绘制总高与头内那份相同、图像映射一
+/// 致；纵向位置 = 头部当前 minY − topInset，随头部滚动同速同向。
+/// 单独订阅 LCSettingsHeaderScroll：滚动逐帧只重排本视图，设置页
+/// body 不再逐帧重算（Phase 29）。topInset = 0（横屏面板形态）时
+/// 不渲染；无横图（图标模糊兜底）时同体背景同样出血。不拦截触摸。
+private struct LCSettingsTopBleed: View {
+    @ObservedObject var scroll: LCSettingsHeaderScroll
+    let image: UIImage?
+    let hasBanner: Bool
+    let headerHeight: CGFloat
+    let topInset: CGFloat
+
+    var body: some View {
+        if topInset > 0, headerHeight > 0 {
+            LCSettingsHeaderBackdrop(image: image, hasBanner: hasBanner, topInset: topInset, extraTop: 0)
+                .frame(height: headerHeight + topInset)
+                .offset(y: scroll.originY - topInset)
+                .allowsHitTesting(false)
+        }
     }
 }
