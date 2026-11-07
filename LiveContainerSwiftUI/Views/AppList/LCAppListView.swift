@@ -1607,13 +1607,68 @@ enum LCGameLibraryInfo {
         return app.uiSelectedContainer ?? app.uiContainers.first
     }
 
-    /// 数据包是否就绪：默认容器 Documents/romfs.img 是否存在
-    static func isDatapackReady(container: LCContainer?) -> Bool {
-        guard let container else {
-            return false
+    /// 容器数据包探测（全仓唯一探测口，状态机 / 旧二态 / 导入链复核
+    /// 共用）：枚举容器 Documents 的真实条目再认形态，不靠写死路径的
+    /// 大小写运气——NSP 工具产出的镜像本名是 RomFS.img，iOS 上精确名
+    /// 查找（fileExists 拼 "romfs.img"）永远找不到它（客体引擎
+    /// dm/ios main.m 的 romfs_document_images 同注，引擎靠枚举 +
+    /// caseInsensitiveCompare 认任意大小写、精确小写名优先）。文件夹
+    /// 形态只认精确名 romfs（引擎 romfs_locate 对文件夹就是精确名
+    /// fileExists，名字大小写不对引擎同样不认，状态不许先认）。
+    struct DatapackProbe {
+        /// 名为 romfs.img 的条目真实 URL（优先精确小写名，
+        /// 其次任意大小写）；Documents 里没有这个名字时为 nil
+        var imageEntry: URL?
+        /// imageEntry 是文件夹（放错形态）而非文件
+        var imageIsDirectory = false
+        /// 名为 romfs 的文件夹真实 URL；不存在或同名不是文件夹时为 nil
+        var folderEntry: URL?
+        /// 可当数据包文件用的条目（是文件形态的 romfs.img）
+        var imageFile: URL? {
+            imageEntry != nil && !imageIsDirectory ? imageEntry : nil
         }
-        let romfsURL = container.containerURL.appendingPathComponent("Documents/romfs.img")
-        return FileManager.default.fileExists(atPath: romfsURL.path)
+    }
+
+    static func probeDatapack(container: LCContainer?) -> DatapackProbe {
+        var probe = DatapackProbe()
+        guard let container else {
+            return probe
+        }
+        let documents = container.containerURL.appendingPathComponent("Documents")
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: documents.path) else {
+            return probe
+        }
+        let imageNames = names.filter { $0.lowercased() == "romfs.img" }
+            .sorted { a, b in
+                let (ea, eb) = (a == "romfs.img", b == "romfs.img")
+                return ea != eb ? ea : a < b
+            }
+        if let name = imageNames.first {
+            let url = documents.appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: url.path, isDirectory: &isDir) {
+                probe.imageEntry = url
+                probe.imageIsDirectory = isDir.boolValue
+            }
+        }
+        if names.contains("romfs") {
+            let url = documents.appendingPathComponent("romfs")
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                probe.folderEntry = url
+            }
+        }
+        return probe
+    }
+
+    /// 数据包是否就绪（存在口径）：探测到 romfs.img 条目（任意大小
+    /// 写、文件或同名文件夹）或 romfs 文件夹即算有包；完好与否由
+    /// gameState 的三态细判，本二态只答有没有（与旧 fileExists
+    /// 口径对同名文件夹返 true 的行为一致）。
+    static func isDatapackReady(container: LCContainer?) -> Bool {
+        let probe = probeDatapack(container: container)
+        return probe.imageEntry != nil || probe.folderEntry != nil
     }
 
     /// 数据包就绪的共用求值入口：先按 appInfo 记录对齐容器快照（与

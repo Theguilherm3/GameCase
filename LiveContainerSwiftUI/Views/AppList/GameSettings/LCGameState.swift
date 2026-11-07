@@ -86,28 +86,35 @@ struct LCGameStateTarget: Identifiable {
 extension LCGameLibraryInfo {
     /// 游戏状态解析（单一入口，主页状态行 / 设置页头部与数据包行 /
     /// 帮助卡 / 库排序共用）：先按记录对齐容器快照（与 datapackReady
-    /// 同方），再按磁盘实况判定。判定顺序：无容器记录 → 缺数据包；
-    /// romfs.img 不存在 → 缺数据包；存在但形态异常 → 已损坏（四种
-    /// 可实证原因，见文件头）；其余 → 可玩。本函数只读不写，不改变
-    /// isDatapackReady / datapackReady 的旧二态口径（导入链复核仍走
-    /// 旧入口，两者互不影响）。
+    /// 同方），再按 probeDatapack 的枚举探测判定（与 datapackReady
+    /// 同一套探测，不再拼写死路径）。判定顺序：无容器记录 → 缺数据
+    /// 包；探到镜像文件（romfs.img 任意大小写）→ 走完好判定链（读
+    /// 不出信息 / 0 字节 / 与 romfs.id 大小不符 → 已损坏，见文件
+    /// 头）；无镜像文件但有 romfs 文件夹 → 可玩（散装文件夹是引擎
+    /// romfs_locate 的正牌回退形态，前提是内含该游戏档案的标记文
+    /// 件——标记路径是客体编译期常量、GC 无从校验，完整解包必含
+    /// 它；不完整的夹子启动时由客体自己报「找不到游戏文件」）；只
+    /// 有同名文件夹占着 romfs.img 的位置 → 已损坏（放错）；什么都
+    /// 没有 → 缺数据包。本函数只读不写。
     static func gameState(for app: LCAppModel) -> LCGameState {
         app.refreshContainerSelection()
         guard let container = defaultContainer(for: app) else {
             return .needsDatapack
         }
-        let romfsURL = container.containerURL.appendingPathComponent("Documents/romfs.img")
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: romfsURL.path, isDirectory: &isDir) else {
+        let probe = probeDatapack(container: container)
+        guard let romfsURL = probe.imageFile else {
+            if probe.folderEntry != nil {
+                return .playable
+            }
+            if let entry = probe.imageEntry {
+                return .broken(
+                    reason: "数据包位置被文件夹占用",
+                    detail: "容器里 romfs.img 本该是个文件，现在却是个文件夹，多半是解压或拷贝时放错了。先到「文件」里把这个文件夹删掉，再重新导入数据包。",
+                    technical: "路径：\(entry.path)\n当前是文件夹，不是文件")
+            }
             return .needsDatapack
         }
-        if isDir.boolValue {
-            return .broken(
-                reason: "数据包位置被文件夹占用",
-                detail: "容器里 romfs.img 本该是个文件，现在却是个文件夹，多半是解压或拷贝时放错了。先到「文件」里把这个文件夹删掉，再重新导入数据包。",
-                technical: "路径：\(romfsURL.path)\n当前是文件夹，不是文件")
-        }
+        let fm = FileManager.default
         guard let attrs = try? fm.attributesOfItem(atPath: romfsURL.path),
               let size = (attrs[.size] as? NSNumber)?.int64Value else {
             return .broken(
