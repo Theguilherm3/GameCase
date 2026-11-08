@@ -81,6 +81,10 @@ cp ./.github/sidelc/LCAppInfo.plist ./Payload/LiveContainer.app/Frameworks/SideS
 # inject zh-Hans localization into the SideStore bundle (upstream ships none)
 cp -r ./.github/sidelc/SideStoreApp-zh-Hans.lproj ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/zh-Hans.lproj
 
+# storyboard .strings are not applied in this framework-as-app form, so
+# rewrite the display strings inside the compiled nibs directly
+python3 ./.github/sidelc/patch_nib_strings.py ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework ./.github/sidelc/nib_text_map.json
+
 # copy intents
 cp ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/Intents.intentdefinition ./Payload/LiveContainer.app/
 cp ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/ViewApp.intentdefinition ./Payload/LiveContainer.app/
