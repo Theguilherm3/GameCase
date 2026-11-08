@@ -42,10 +42,11 @@ struct LCGameCoverView: View {
     /// 现读磁盘算出来的，本视图不观察任何状态，令牌不变 body 就不重跑、
     /// 换完封面仍显示旧图。令牌作为入参变化即触发重解析。
     let refreshToken: Int
-    /// 无横图兜底美化（Phase 19）：仅主页大卡（竖屏 hero）与横屏牌组卡
-    /// 打开——解析落到图标时不再把图标拉伸充数，改 NX 无横图同款语言
-    /// （与设置页头部 Phase 17 的无横图路同源）。小缩略图（最近游玩 /
-    /// 网格卡 / 横屏背景晕染）保持旧兜底，不传此旗。
+    /// 无横图兜底美化（Phase 19）：解析落到图标时不把图标拉伸充数，
+    /// 改 NX 无横图同款语言（与设置页头部 Phase 17 的无横图路同源）。
+    /// 打开的面：竖屏 hero、横屏牌组卡、竖屏网格卡与最近游玩缩略图
+    /// （网格/最近两处 2026-11-08 按 Tiao 要求对齐横屏处理）；仅横屏
+    /// 背景晕染保持旧兜底（整幅糊化是其本职）。
     var beautifiedFallback: Bool = false
 
     var body: some View {
@@ -790,7 +791,7 @@ struct LCGameHomeView: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: spacing), GridItem(.flexible(), spacing: spacing)], spacing: 18) {
                 ForEach(orderedApps, id: \.self) { app in
                     VStack(alignment: .leading, spacing: 8) {
-                        LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
+                        LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
                             .frame(width: columnWidth, height: columnWidth * 9 / 16)
                             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                             .overlay(alignment: .topLeading) {
@@ -832,7 +833,7 @@ struct LCGameHomeView: View {
             ForEach(rows.indices, id: \.self) { idx in
                 let app = rows[idx]
                 HStack(spacing: 12) {
-                    LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken)
+                    LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
                         .frame(width: 73, height: 41)
                         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                     VStack(alignment: .leading, spacing: 3) {
