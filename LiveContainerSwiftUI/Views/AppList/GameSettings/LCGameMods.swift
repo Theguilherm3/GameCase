@@ -315,11 +315,31 @@ enum LCGameMods {
 
     // MARK: env.txt 维护
 
+    /// 客体启动页的逐游戏开关（设置页「高级」组）：默认隐藏——启动
+    /// 维护写 DM_LAUNCHER=0、点开直进游戏；玩家打开「显示游戏启动
+    /// 页」后维护改为删行，客体下次启动恢复自带启动页。标记只存宿
+    /// 主 UserDefaults（gc.launcherGate.show.<bundleId>，默认 false
+    /// = 隐藏）：这是 GC 自己的呈现开关，不进客体偏好、与
+    /// launcher.json 镜像无关。
+    enum LauncherGate {
+        private static func key(forBundleIdentifier bundleIdentifier: String) -> String {
+            "gc.launcherGate.show.\(bundleIdentifier)"
+        }
+
+        static func showsLauncher(forBundleIdentifier bundleIdentifier: String) -> Bool {
+            UserDefaults.standard.bool(forKey: key(forBundleIdentifier: bundleIdentifier))
+        }
+
+        static func setShowsLauncher(_ show: Bool, forBundleIdentifier bundleIdentifier: String) {
+            UserDefaults.standard.set(show, forKey: key(forBundleIdentifier: bundleIdentifier))
+        }
+    }
+
     /// 按容器当前 mods / cheats 现状、同一次维护里顺序维护其
     /// Documents/env.txt 的三行：先 DM_ROMFS_OVERLAY（mods 现
     /// 算，无可用 mod 删行）、次 DM_CHEATS（cheats 夹内有文件名
     /// 合规的 .txt 才写 cheats、否则删行，判据见 LCGameCheats）、
-    /// 末 DM_LAUNCHER（恒 0，见下）。三行共用 maintainEnvLine 这
+    /// 末 DM_LAUNCHER（按逐游戏开关，见下）。三行共用 maintainEnvLine 这
     /// 一个写者，他行逐字保留。同一漏斗里另有两件不经 env 的事：
     /// 删除旧云存档通道残留的 DM_SAVE_SYNC 行、把云存档书签同步
     /// 进客体偏好（均见下）。维护失败静默吞掉：都只是增强 / 呈现
@@ -338,15 +358,17 @@ enum LCGameMods {
         // 节见 LCGameCloudSaves 文件头。
         maintainEnvLine(envFile: envFile, key: LCGameCloudSaves.legacyEnvKey, value: nil)
         LCGameCloudSaves.syncGuestBookmark(container: container, bundleIdentifier: bundleIdentifier)
-        // GC 恒在 env 里关客体自带启动页：GC 的设置页就是那套设置
-        // 的呈现层，库里点开应当直进游戏。客体语义（nxnative
+        // GC 默认在 env 里关客体自带启动页：GC 的设置页就是那套
+        // 设置的呈现层，库里点开应当直进游戏。客体语义（nxnative
         // dm/ios main.m boot_env + Launcher.swift）：Documents/
         // env.txt 优先于包内 dm/env.txt，DM_LAUNCHER=0 时启动器
         // applySaved（GC 设置页写的那份偏好照常生效）后直接开局。
         // 等价于此前 gc-* 专用包在构建时往包内烘焙同一行——有了这
-        // 行，单装版 IPA 装进 GC 也直进游戏，不必再出专用包。无条
-        // 件恒维护 0：这正是 GC 的定位，不留逐游戏开关。
-        maintainEnvLine(envFile: envFile, key: "DM_LAUNCHER", value: "0")
+        // 行，单装版 IPA 装进 GC 也直进游戏，不必再出专用包。逐游
+        // 戏开关（LauncherGate，设置页「高级」组）：打开「显示游戏
+        // 启动页」的那款改为删行，客体下次启动恢复自带启动页。
+        maintainEnvLine(envFile: envFile, key: "DM_LAUNCHER",
+                        value: LauncherGate.showsLauncher(forBundleIdentifier: bundleIdentifier) ? nil : "0")
     }
 
     /// 启动漏斗入口：容器取 runApp 即将启动的那一个（与

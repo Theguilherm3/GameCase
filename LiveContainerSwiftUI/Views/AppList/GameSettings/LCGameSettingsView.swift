@@ -308,6 +308,7 @@ struct LCGameSettingsView: View {
     @State private var currentValues: [String: String] = [:]
     @State private var datapackRequest: LCDatapackRequest?
     @State private var logPresented = false // 日志查看器（游戏组日志行 / 损坏帮助卡共用）
+    @State private var showGuestLauncher = false // 「高级」组：显示游戏启动页（LCGameMods.LauncherGate）
     @State private var statusRefresh = 0 // 数据包导入完成后 bump，刷新状态点
     @State private var confirmReset = false
     @State private var headerWidth: CGFloat = 0 // 封面头实测宽（NX PaneBanner 同法，背景 GeometryReader 回填）
@@ -1100,6 +1101,27 @@ struct LCGameSettingsView: View {
                         .foregroundColor(LCNXColor.cream)
                 }
             }
+            nxDivider
+            // GC 默认隐藏客体自带启动页、点开直进游戏（env 维护
+            // DM_LAUNCHER=0）；这一行逐游戏放行：打开后启动维护改
+            // 为删行，下次启动恢复显示启动页。值存 LauncherGate。
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("显示游戏启动页")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white)
+                    Text("开启后，下次启动先显示游戏自带启动页；关闭则直接进入游戏。")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                LCCreamSwitch(isOn: showGuestLauncher) { isOn in
+                    showGuestLauncher = isOn
+                    LCGameMods.LauncherGate.setShowsLauncher(isOn, forBundleIdentifier: app.bundleIdentifier)
+                }
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
     }
 
@@ -1152,6 +1174,7 @@ struct LCGameSettingsView: View {
         // 客体启动器写偏好走的是被启动容器的 plist，读侧容器若停在模型创建时的
         // 快照上，就会整页读旧容器的值（客体改了 120、这里还显示 60）。
         app.refreshContainerSelection()
+        showGuestLauncher = LCGameMods.LauncherGate.showsLauncher(forBundleIdentifier: app.bundleIdentifier)
         let loaded = LCGameProfile.loadSettings(app: app)
         settings = loaded ?? []
         hasProfile = loaded != nil
