@@ -78,6 +78,9 @@ mv ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore.dylib
 ldid -S"" ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore
 cp ./.github/sidelc/LCAppInfo.plist ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/
 
+# inject zh-Hans localization into the SideStore bundle (upstream ships none)
+cp -r ./.github/sidelc/SideStoreApp-zh-Hans.lproj ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/zh-Hans.lproj
+
 # copy intents
 cp ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/Intents.intentdefinition ./Payload/LiveContainer.app/
 cp ./Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/ViewApp.intentdefinition ./Payload/LiveContainer.app/
