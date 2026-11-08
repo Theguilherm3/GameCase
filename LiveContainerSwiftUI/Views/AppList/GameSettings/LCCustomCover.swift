@@ -172,7 +172,7 @@ struct LCCoverCropView: View {
                 width: frameW, height: frameH
             )
             ZStack {
-                Color(white: 0.05).ignoresSafeArea()
+                Color(UIColor.systemBackground).ignoresSafeArea()
                 // 框外变暗（eoFill 挖洞）
                 Path { path in
                     path.addRect(CGRect(origin: .zero, size: geo.size))
@@ -187,7 +187,6 @@ struct LCCoverCropView: View {
             .onAppear { viewSize = geo.size }
             .onChange(of: geo.size) { viewSize = $0 }
         }
-        .preferredColorScheme(.dark)
         .navigationTitle("裁剪封面")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

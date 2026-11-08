@@ -77,7 +77,6 @@ struct LCDatapackImportView: View {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
-        .preferredColorScheme(.dark)
         .onAppear {
             // 本页的写侧解析（existingDatapackSize / startCopy / 文件夹
             // 导入）与读侧复核共用 defaultContainer 的同一份快照：出现

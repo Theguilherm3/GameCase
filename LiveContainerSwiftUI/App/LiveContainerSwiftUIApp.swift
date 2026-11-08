@@ -9,7 +9,19 @@ import SwiftUI
 @main
 struct LiveContainerSwiftUIApp : SwiftUI.App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
+
+    /// 外观三档（标准 UserDefaults 键 gc.appearance）：0=深色（缺省）、
+    /// 1=跟随系统、2=浅色。在 Main 窗口根部统一生效，各页面不再写死深色。
+    @AppStorage("gc.appearance") private var gcAppearance = 0
+
+    private var gcColorScheme: ColorScheme? {
+        switch gcAppearance {
+        case 1: return nil
+        case 2: return .light
+        default: return .dark
+        }
+    }
+
     init() {
         let fm = FileManager()
         var tempAppDataFolderNames : [String] = []
@@ -111,6 +123,7 @@ struct LiveContainerSwiftUIApp : SwiftUI.App {
     var body: some Scene {
         WindowGroup(id: "Main") {
             LCTabView()
+                .preferredColorScheme(gcColorScheme)
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .environmentObject(DataManager.shared.model)
                 .environmentObject(LCAppSortManager.shared)
