@@ -74,6 +74,16 @@ import UniformTypeIdentifiers
 enum LCGameCloudSaves {
     static let envKey = "DM_SAVE_SYNC"
 
+    /// 书签造 / 解的 scope 选项：Swift 侧的 .withSecurityScope
+    /// （URL / NSURL 两套 OptionSet 静态成员都是）在本仓的 iOS 15
+    /// 部署目标 + CI 的 Xcode 26.2 下被 SDK 标为 iOS unavailable
+    /// （PR #32 两轮 CI 实证），只能按 ObjC 头里的公开数值常量用
+    /// rawValue 构造——NSURLBookmarkCreationWithSecurityScope
+    /// (1<<11) / NSURLBookmarkResolutionWithSecurityScope (1<<9)，
+    /// iOS 7 起的 ABI 常量，与引擎 CloudSaves.m 传的是同一个值。
+    private static let bookmarkCreateOptions = NSURL.BookmarkCreationOptions(rawValue: 1 << 11)
+    private static let bookmarkResolveOptions = NSURL.BookmarkResolutionOptions(rawValue: 1 << 9)
+
     /// 一款游戏的云存档记录（宿主 Documents/CloudSaves/<bundleId>.plist）
     struct Record: Codable {
         var bookmark: Data
@@ -138,30 +148,49 @@ enum LCGameCloudSaves {
 
     // MARK: 书签（照 NX2 BookmarkStore / 引擎 CloudSaves.m 的 fresh 口径）
 
-    /// 为刚选的文件夹造书签：必须在选择器授予的 scope 还在时写（无
-    /// scope 写出的书签下次启动解析不回来），且能当场解析回来才算成。
+    /// 为刚选的文件夹造书签：必须带 .withSecurityScope 造——不带这
+    /// 个选项的书签能解析回路径、却不携带任何沙箱授予，下次启动
+    /// startAccessing 返 false、引擎读写文件夹被沙箱拒（首版就栽在
+    /// 这里：书签造时 options 传空，设置页显示已开启、env 也递了
+    /// 路径，引擎却碰不到文件夹，云端永远不落文件）。造完当场按解
+    /// 析口径验一遍：解析得回且授予探针能过才算成。
     private static func freshBookmark(for url: URL) -> Data? {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) else {
+        guard let data = try? (url as NSURL).bookmarkData(options: bookmarkCreateOptions, includingResourceValuesForKeys: nil, relativeTo: nil) else {
             return nil
         }
-        var stale = false
-        guard (try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)) != nil else {
+        var stale: ObjCBool = false
+        guard let resolved = try? NSURL(resolvingBookmarkData: data, options: bookmarkResolveOptions, relativeTo: nil, bookmarkDataIsStale: &stale),
+              grantsAccess(resolved as URL) else {
             return nil
         }
         return data
+    }
+
+    /// 授予探针：解析出的 URL 真持 startAccessing 一次——返 true 才
+    /// 说明书签带着 security scope 授予；返 false = 只有路径没有授
+    /// 予（无 scope 的旧书签 / 授予已失），按失效处理。探完即停，
+    /// 不留持有（真正的持有在启动维护的 envValue 里）。
+    private static func grantsAccess(_ url: URL) -> Bool {
+        guard url.startAccessingSecurityScopedResource() else {
+            return false
+        }
+        url.stopAccessingSecurityScopedResource()
+        return true
     }
 
     /// 解析书签。resolvable 但系统报 stale 时把新书签回写进记录
     /// （同签名下可自愈）；解析不出返回 nil（签名已变等），记录原样
     /// 保留——状态判定会把它呈现为「失效」等玩家重选或移除。
     private static func resolve(_ record: Record, forBundleIdentifier bundleIdentifier: String) -> URL? {
-        var stale = false
-        guard let url = try? URL(resolvingBookmarkData: record.bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) else {
+        var stale: ObjCBool = false
+        guard let resolved = try? NSURL(resolvingBookmarkData: record.bookmark, options: bookmarkResolveOptions, relativeTo: nil, bookmarkDataIsStale: &stale),
+              grantsAccess(resolved as URL) else {
             return nil
         }
-        if stale, let fresh = freshBookmark(for: url) {
+        let url = resolved as URL
+        if stale.boolValue, let fresh = freshBookmark(for: url) {
             var updated = record
             updated.bookmark = fresh
             save(updated, forBundleIdentifier: bundleIdentifier)
@@ -231,8 +260,12 @@ enum LCGameCloudSaves {
               let url = resolve(record, forBundleIdentifier: bundleIdentifier) else {
             return nil
         }
-        // 返回值照引擎 CloudSaves.m 口径不查：解析成功即持、即递路径
-        _ = url.startAccessingSecurityScopedResource()
+        // resolve 已过授予探针，这里再持一次并认结果：万一授予在两
+        // 次调用间失效，返 false 就当未配置（删 env 行），不把一条
+        // 引擎碰不到的路径递出去假装在同步
+        guard url.startAccessingSecurityScopedResource() else {
+            return nil
+        }
         heldScopeURL = url
         return url.path
     }
