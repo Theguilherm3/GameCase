@@ -70,6 +70,18 @@ def get_file_size(url):
         print(f"Error getting file size: {e}")
         return 194586
 
+def strip_empty_channels(data):
+    # SideStore's decoder rejects the whole source when any release channel
+    # carries an empty releases list ("At least one version is required in
+    # key: releases"). A seed-fallback base (.github/*.json) ships empty
+    # channel skeletons and the per-track fills only touch one track per
+    # run, so never write an empty channel out.
+    for app in data.get("apps", []):
+        channels = app.get("releaseChannels")
+        if channels:
+            app["releaseChannels"] = [c for c in channels if c.get("releases")]
+
+
 def update_json_file_release(repo_url, json_file, latest_release):
     if isinstance(latest_release, list) and latest_release:
         latest_release = latest_release[0]
@@ -148,6 +160,8 @@ def update_json_file_release(repo_url, json_file, latest_release):
     news_entry_exists = any(item["identifier"] == news_identifier for item in data["news"])
     if not news_entry_exists:
         data["news"].append(news_entry)
+
+    strip_empty_channels(data)
 
     try:
         with open(json_file, "w") as file:
@@ -231,6 +245,8 @@ This is a nightly release [created automatically with GitHub Actions workflow]({
     })
 
     data["news"] = []
+
+    strip_empty_channels(data)
 
     try:
         with open(json_file, "w") as file:
@@ -335,6 +351,8 @@ Nightly build from [{commit_sha}](https://github.com/Tiaoge-tou/GameCase/commit/
             if channel['track'] != 'nightly':
                 continue
             channel['releases'] = [version_entry]
+    strip_empty_channels(data)
+
     try:
         with open(json_file, "w") as file:
             json.dump(data, file, indent=2)
