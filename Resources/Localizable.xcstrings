@@ -27773,6 +27773,23 @@
         }
       }
     },
+    "lc.settings.openBuiltinSideStore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Built-in SideStore"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开内置 SideStore"
+          }
+        }
+      }
+    },
     "lc.settings.redirectURLToHost": {
       "extractionState": "stale",
       "localizations": {

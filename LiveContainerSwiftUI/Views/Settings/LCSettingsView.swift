@@ -159,6 +159,18 @@ struct LCSettingsView: View {
                             }
                         }
                     }
+                    // 内置 SideStore 的打开入口（仅 +SideStore 版有这个
+                    // framework）：游戏库改版后上游 Apps 页的 SideStore
+                    // 按钮已不在，这里补回——玩家要先在内置 SideStore
+                    // 里登录 Apple ID 并刷新一次，上面的一键导入证书
+                    // 才读得到共享钥匙串里的证书。
+                    if UserDefaults.sideStoreExist() {
+                        Button {
+                            LCUtils.openSideStore()
+                        } label: {
+                            Text("lc.settings.openBuiltinSideStore".loc)
+                        }
+                    }
                     
                     NavigationLink {
                         LCJITLessDiagnoseView()

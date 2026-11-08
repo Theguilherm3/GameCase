@@ -57,6 +57,14 @@ GameCase 是一个专为 iOS 移植游戏设计的侧载游戏容器。它基于
 - **数据包手动放置**：也可以不用 App 内导入，直接在「文件」App 里把 `romfs.img` 放进 `GameCase → Data → Application → <游戏名> → Documents` 文件夹内（注意是游戏容器夹里面的 Documents，不是放在容器夹根目录）。
 - **免 JIT 模式**：在容器设置中导入与签名容器本体同一团队的证书，团队不一致会被挡下。
 
+## SideStore 版使用说明
+
+Release 同时提供 `GameCase+SideStore.ipa`：内置了完整的 SideStore，整个应用只占一个免费签名名额。它的用处是**内签**——在手机上用你的 Apple ID 给 GameCase 本体续签、更新，以及签名安装其它应用，全程不需要电脑。
+
+- **首次设置**：在「设置」页点「打开内置 SideStore」，在内置 SideStore 的设置中登录 Apple ID，连接 LocalDevVPN 后到「My Apps」点一次「Refresh All」；回到 GameCase「设置」页点「从 SideStore 导入证书」，按钮变为「移除证书」即已打通，免 JIT 模式随之可用。
+- **续签**：免费证书临近到期时，打开内置 SideStore 点「Refresh All」即可为 GameCase 本体续签。
+- **更新**：把新版 GameCase 的 IPA 在内置 SideStore 中安装即覆盖更新，游戏与数据保留。
+
 ## 致谢与开源来源
 
 GameCase 站在以下开源工作之上，特此致谢：
