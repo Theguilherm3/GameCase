@@ -466,15 +466,30 @@ struct LCGameHomeView: View {
         }
     }
 
+    /// 圆形图面浮钮底：两个调用方（chromeButton、＋导入菜单）都是可点
+    /// 控件；iOS 26 + Liquid Glass 可用时换原生玻璃（黑低透 tint 保图上
+    /// 可读性、interactive 按压反馈），否则逐字保留 chip 填充+描边。
     private func circleChrome(diameter: CGFloat, @ViewBuilder content: () -> some View) -> some View {
         ZStack {
-            Circle()
-                .fill(LCGameTheme.chipBackground)
-            Circle()
-                .strokeBorder(LCGameTheme.chipBorder, lineWidth: 1)
             content()
         }
         .frame(width: diameter, height: diameter)
+        .modifier { view in
+            if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                view
+                    .glassEffect(.regular.tint(.black.opacity(0.4)).interactive(), in: .circle)
+            } else {
+                view
+                    .background {
+                        ZStack {
+                            Circle()
+                                .fill(LCGameTheme.chipBackground)
+                            Circle()
+                                .strokeBorder(LCGameTheme.chipBorder, lineWidth: 1)
+                        }
+                    }
+            }
+        }
     }
 
     private func chromeButton(diameter: CGFloat, systemImage: String, fontSize: CGFloat, action: @escaping () -> Void) -> some View {
@@ -496,22 +511,32 @@ struct LCGameHomeView: View {
         Button {
             controllerPanelPresented = true
         } label: {
-            ZStack {
-                Capsule()
-                    .fill(LCGameTheme.chipBackground)
-                Capsule()
-                    .strokeBorder(LCGameTheme.chipBorder, lineWidth: 1)
-                HStack(spacing: 8) {
-                    Image(systemName: "gamecontroller")
-                        .font(.system(size: height * 0.42))
-                    Text("\(controllerMonitor.controllers.count)")
-                        .font(.system(size: height * 0.4, weight: .bold))
-                }
-                .foregroundColor(LCGameTheme.chipIcon)
-                .padding(.horizontal, height * 0.32)
+            HStack(spacing: 8) {
+                Image(systemName: "gamecontroller")
+                    .font(.system(size: height * 0.42))
+                Text("\(controllerMonitor.controllers.count)")
+                    .font(.system(size: height * 0.4, weight: .bold))
             }
+            .foregroundColor(LCGameTheme.chipIcon)
+            .padding(.horizontal, height * 0.32)
             .frame(height: height)
             .fixedSize(horizontal: true, vertical: false)
+            .modifier { view in
+                if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                    view
+                        .glassEffect(.regular.tint(.black.opacity(0.4)).interactive(), in: .capsule)
+                } else {
+                    view
+                        .background {
+                            ZStack {
+                                Capsule()
+                                    .fill(LCGameTheme.chipBackground)
+                                Capsule()
+                                    .strokeBorder(LCGameTheme.chipBorder, lineWidth: 1)
+                            }
+                        }
+                }
+            }
         }
         .buttonStyle(.plain)
     }
@@ -608,8 +633,17 @@ struct LCGameHomeView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background(Capsule().fill(Color.black.opacity(0.72)))
-            .overlay(Capsule().strokeBorder(LCGameTheme.chipBorder, lineWidth: 1))
+            .modifier { view in
+                if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                    // 纯展示胶囊（安装进度）：玻璃不加 interactive
+                    view
+                        .glassEffect(.regular.tint(.black.opacity(0.45)), in: .capsule)
+                } else {
+                    view
+                        .background(Capsule().fill(Color.black.opacity(0.72)))
+                        .overlay(Capsule().strokeBorder(LCGameTheme.chipBorder, lineWidth: 1))
+                }
+            }
             .padding(.top, safeTop + 8)
             Spacer()
         }

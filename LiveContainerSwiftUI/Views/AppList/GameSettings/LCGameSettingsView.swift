@@ -63,7 +63,9 @@ private enum LCNXColor {
 }
 
 /// NX ChipButtonStyle 移植：「‹ 游戏库」深色胶囊（ultraThinMaterial 叠
-/// 黑 0.5、按下 0.62，白 0.14 描边，强制暗色环境渲染材质）
+/// 黑 0.5、按下 0.62，白 0.14 描边，强制暗色环境渲染材质）。
+/// iOS 26 + Liquid Glass 可用时背景换原生玻璃（浮在封面图上，前景
+/// 白字不动，按压反馈由玻璃 interactive 自带）；否则逐字保留原实现。
 private struct LCNXChipButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -71,14 +73,22 @@ private struct LCNXChipButtonStyle: ButtonStyle {
             .padding(.horizontal, 14)
             .frame(minHeight: 44)
             .foregroundColor(.white)
-            .background {
-                ZStack {
-                    Capsule().fill(.ultraThinMaterial)
-                    Capsule().fill(Color.black.opacity(configuration.isPressed ? 0.62 : 0.5))
+            .modifier { content in
+                if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                    content
+                        .glassEffect(.regular.tint(.black.opacity(0.35)).interactive(), in: .capsule)
+                } else {
+                    content
+                        .background {
+                            ZStack {
+                                Capsule().fill(.ultraThinMaterial)
+                                Capsule().fill(Color.black.opacity(configuration.isPressed ? 0.62 : 0.5))
+                            }
+                        }
+                        .overlay {
+                            Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                        }
                 }
-            }
-            .overlay {
-                Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
             }
             .contentShape(Capsule())
     }

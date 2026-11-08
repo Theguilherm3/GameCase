@@ -202,7 +202,7 @@ struct LCDatapackImportView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                 }
-                .buttonStyle(.borderedProminent)
+                .gcGlassProminentButtonStyle()
                 .tint(LCGameTheme.accentColor)
                 .padding(.horizontal)
                 Button {
@@ -213,7 +213,7 @@ struct LCDatapackImportView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                 }
-                .buttonStyle(.bordered)
+                .gcGlassButtonStyle()
                 .tint(LCGameTheme.accentColor)
                 .padding(.horizontal)
                 Text("lc.datapack.folderHint".loc)
@@ -256,7 +256,7 @@ struct LCDatapackImportView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .gcGlassProminentButtonStyle()
                     .tint(LCGameTheme.accentColor)
                 }
                 .padding(.horizontal)

@@ -72,6 +72,30 @@ extension View {
     ) -> ModifiedContent {
         body(self)
     }
+
+    /// 主按钮玻璃化（渐进增强）：iOS 26 且 Liquid Glass 可用时用系统
+    /// .glassProminent，否则逐字回退 .borderedProminent。玻璃 API 只
+    /// 出现在 #available 分支里，低版本编译路径不引用。
+    func gcGlassProminentButtonStyle() -> some View {
+        self.modifier { content in
+            if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                content.buttonStyle(.glassProminent)
+            } else {
+                content.buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    /// 次按钮玻璃化：同上，玻璃时 .glass、否则 .bordered。
+    func gcGlassButtonStyle() -> some View {
+        self.modifier { content in
+            if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                content.buttonStyle(.glass)
+            } else {
+                content.buttonStyle(.bordered)
+            }
+        }
+    }
 }
 
 public struct DocModifier: ViewModifier {

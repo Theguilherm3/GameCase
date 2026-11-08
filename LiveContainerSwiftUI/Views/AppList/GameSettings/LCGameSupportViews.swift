@@ -111,7 +111,10 @@ struct LCGameLogView: View {
 // MARK: - 帮助内容（卡与页共用）
 
 /// NX PrimaryPillStyle 同值本地版（可满宽）：奶油底黑字、bold 17、
-/// minHeight 50、按下 opacity 0.78 + scale 0.98
+/// minHeight 50、按下 opacity 0.78 + scale 0.98。
+/// iOS 26 + Liquid Glass 可用时底换原生玻璃（无 tint，随外观自适应，
+/// 浅色下即浅色玻璃）；按下 opacity/scale 两分支共用、逐字保留。
+/// 否则逐字保留奶油底原实现。
 private struct LCStatePillStyle: ButtonStyle {
     var expands = false
     func makeBody(configuration: Configuration) -> some View {
@@ -122,13 +125,23 @@ private struct LCStatePillStyle: ButtonStyle {
             .padding(.horizontal, 26)
             .frame(maxWidth: expands ? .infinity : nil, minHeight: 50)
             .foregroundColor(.black)
-            .background(LCGameTheme.nxCream, in: Capsule())
+            .modifier { content in
+                if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                    content
+                        .glassEffect(.regular, in: .capsule)
+                } else {
+                    content
+                        .background(LCGameTheme.nxCream, in: Capsule())
+                }
+            }
             .opacity(configuration.isPressed ? 0.78 : 1)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
     }
 }
 
-/// NX ShellButtonStyle(fills: true) 同值本地版：满宽浅底钮
+/// NX ShellButtonStyle(fills: true) 同值本地版：满宽浅底钮。
+/// iOS 26 + Liquid Glass 可用时底换原生玻璃（无 tint，随外观自适应；
+/// 玻璃无底色深浅差，按下反馈改走 opacity）；否则逐字保留原实现。
 private struct LCStateShellButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -136,11 +149,20 @@ private struct LCStateShellButtonStyle: ButtonStyle {
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, minHeight: 44)
             .foregroundColor(.primary)
-            .background(Color.primary.opacity(configuration.isPressed ? 0.13 : 0.055),
-                        in: RoundedRectangle(cornerRadius: 9))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9)
-                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+            .modifier { content in
+                if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                    content
+                        .glassEffect(.regular, in: .rect(cornerRadius: 9))
+                        .opacity(configuration.isPressed ? 0.82 : 1)
+                } else {
+                    content
+                        .background(Color.primary.opacity(configuration.isPressed ? 0.13 : 0.055),
+                                    in: RoundedRectangle(cornerRadius: 9))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 9)
+                                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+                        }
+                }
             }
     }
 }
