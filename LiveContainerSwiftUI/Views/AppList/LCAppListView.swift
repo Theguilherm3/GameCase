@@ -308,7 +308,6 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
-        .preferredColorScheme(.dark)
         .onChange(of: sharedModel.selectedTab) { tab in
             // 底栏已摘除：证书等深链要求去设置页时，呈现容器设置
             // （自适应宿主，与齿轮入口同一条形态规则）

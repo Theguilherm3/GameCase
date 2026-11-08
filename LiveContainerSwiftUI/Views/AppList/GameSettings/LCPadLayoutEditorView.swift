@@ -92,7 +92,6 @@ struct LCPadLayoutEditorView: View {
             }
         }
         .hideTabBarOnPush()
-        .preferredColorScheme(.dark)
         .navigationBarHidden(true)
         .confirmationDialog("全部重置？", isPresented: $confirmResetAll, titleVisibility: .visible) {
             Button("全部重置", role: .destructive) {

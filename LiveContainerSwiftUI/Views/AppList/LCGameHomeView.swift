@@ -17,13 +17,32 @@ import GameController
 enum LCGameTheme {
     static let creamColor = Color(red: 0.965, green: 0.929, blue: 0.839)
     static let accentColor = Color(red: 0.788, green: 0.373, blue: 0.263)
-    static let cardBackground = Color(red: 0.118, green: 0.118, blue: 0.129)
+    // 压在页面/卡片底上的四项随外观翻转（UIColor trait 动态色）：深色值
+    // 与原硬编码逐字一致，浅色值见各行后段。封面图上的浮层色（chip*、
+    // nxCream 等）不翻，两模式共用。
+    static let cardBackground = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.118, green: 0.118, blue: 0.129, alpha: 1)
+            : UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+    })
 
     // NX 预览取值
-    static let pageBackground = Color(red: 10 / 255, green: 10 / 255, blue: 11 / 255)
+    static let pageBackground = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1)
+            : UIColor(red: 242 / 255, green: 242 / 255, blue: 247 / 255, alpha: 1)
+    })
     static let nxCream = Color(red: 1.0, green: 240 / 255, blue: 214 / 255)
-    static let mutedText = Color(red: 158 / 255, green: 158 / 255, blue: 164 / 255)
-    static let sectionText = Color(red: 228 / 255, green: 224 / 255, blue: 218 / 255)
+    static let mutedText = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 158 / 255, green: 158 / 255, blue: 164 / 255, alpha: 1)
+            : UIColor(red: 99 / 255, green: 99 / 255, blue: 104 / 255, alpha: 1)
+    })
+    static let sectionText = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 228 / 255, green: 224 / 255, blue: 218 / 255, alpha: 1)
+            : UIColor(red: 28 / 255, green: 28 / 255, blue: 30 / 255, alpha: 1)
+    })
     static let readyGreen = Color(red: 64 / 255, green: 214 / 255, blue: 120 / 255)
     static let missingAmber = Color(red: 1.0, green: 176 / 255, blue: 66 / 255)
     /// 已损坏（状态机三态新增，与设置页 LCNXColor.broken 同值）
@@ -1588,7 +1607,6 @@ struct LCHiddenAppsView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private func iconView(for app: LCAppModel) -> some View {

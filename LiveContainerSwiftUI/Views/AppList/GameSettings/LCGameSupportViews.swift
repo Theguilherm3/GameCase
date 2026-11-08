@@ -96,7 +96,6 @@ struct LCGameLogView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
         .onAppear {
             guard !didLoad else {
                 return
@@ -136,12 +135,12 @@ private struct LCStateShellButtonStyle: ButtonStyle {
             .font(.system(size: 14, weight: .semibold))
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, minHeight: 44)
-            .foregroundColor(.white)
-            .background(Color.white.opacity(configuration.isPressed ? 0.13 : 0.055),
+            .foregroundColor(.primary)
+            .background(Color.primary.opacity(configuration.isPressed ? 0.13 : 0.055),
                         in: RoundedRectangle(cornerRadius: 9))
             .overlay {
                 RoundedRectangle(cornerRadius: 9)
-                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
             }
     }
 }
@@ -167,23 +166,23 @@ struct LCGameStateHelpContent: View {
             if !state.explanation.isEmpty {
                 Text(state.explanation)
                     .font(.system(size: 14.5))
-                    .foregroundColor(.white.opacity(0.72))
+                    .foregroundColor(.primary.opacity(0.72))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !state.fixText.isEmpty {
                 Text(state.fixText)
                     .font(.system(size: 15))
-                    .foregroundColor(.white.opacity(0.78))
+                    .foregroundColor(.primary.opacity(0.78))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if case .broken(_, _, let technical) = state, !technical.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("详情")
                         .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.primary.opacity(0.5))
                     Text(verbatim: technical)
                         .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.primary.opacity(0.5))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -223,10 +222,16 @@ struct LCGameStateHelpCard: View {
     var body: some View {
         LCGameStateHelpContent(state: state, onImportDatapack: onImportDatapack, onShowLog: onShowLog)
             .padding(18)
-            .background(Color(red: 0.10, green: 0.10, blue: 0.11), in: RoundedRectangle(cornerRadius: 16))
+            // 卡面随外观翻转（深色值与原硬编码逐字一致、浅色纯白）：内容
+            // 文字已改 primary 自适应，卡面不翻的话浅色下黑字压深卡不可读
+            .background(Color(UIColor { trait in
+                trait.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.10, green: 0.10, blue: 0.11, alpha: 1)
+                    : UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+            }), in: RoundedRectangle(cornerRadius: 16))
             .overlay {
                 RoundedRectangle(cornerRadius: 16)
-                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
             }
     }
 }
@@ -263,7 +268,6 @@ struct LCGameStateHelpSheet: View {
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(LCGameTheme.pageBackground.ignoresSafeArea())
-        .preferredColorScheme(.dark)
         .sheet(isPresented: $logPresented) {
             LCGameLogView(app: app)
         }

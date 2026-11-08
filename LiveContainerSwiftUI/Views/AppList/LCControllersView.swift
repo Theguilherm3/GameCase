@@ -91,7 +91,6 @@ struct LCControllersView: View {
         .padding(.top, topContentPad)
         .background(Self.background.ignoresSafeArea())
         .foregroundStyle(.white)
-        .preferredColorScheme(.dark)
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             batteryTick += 1
         }

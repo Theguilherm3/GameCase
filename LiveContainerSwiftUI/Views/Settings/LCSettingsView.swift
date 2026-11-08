@@ -46,6 +46,7 @@ struct LCSettingsView: View {
     @StateObject private var certificateImportFileAlert = AlertHelper<URL>()
     @StateObject private var certificateImportPasswordAlert = InputHelper()
     
+    @AppStorage("gc.appearance") var gcAppearance = 0
     @AppStorage("LCFrameShortcutIcons") var frameShortIcon = false
     @AppStorage("LCSwitchAppWithoutAsking") var silentSwitchApp = false
     @AppStorage("LCOpenWebPageWithoutAsking") var silentOpenWebPage = false
@@ -190,6 +191,16 @@ struct LCSettingsView: View {
                 } footer: {
                     Text("lc.settings.jitLessDesc".loc)
                 }
+            }
+            Section {
+                Picker("lc.settings.appearance".loc, selection: $gcAppearance) {
+                    Text("lc.settings.appearance.dark".loc).tag(0)
+                    Text("lc.settings.appearance.system".loc).tag(1)
+                    Text("lc.settings.appearance.light".loc).tag(2)
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("lc.settings.appearance".loc)
             }
             if (store != .Unknown && store != .ADP) || LCUtils.isAppGroupAltStoreLike() {
                 Section{

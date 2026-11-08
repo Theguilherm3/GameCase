@@ -81,7 +81,6 @@ private struct LCNXChipButtonStyle: ButtonStyle {
                 Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
             }
             .contentShape(Capsule())
-            .environment(\.colorScheme, .dark)
     }
 }
 
@@ -453,7 +452,6 @@ struct LCGameSettingsView: View {
         .navigationBarHidden(true)
         }
         .background(Self.pageBackground.ignoresSafeArea())
-        .preferredColorScheme(.dark)
         .onAppear {
             // 每次进页都按磁盘现状重解析封面与数据包状态（两个计数器被封面头 /
             // 封面行 / 数据包行读取，bump 即重算），不依赖上一次会话的快照
