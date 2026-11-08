@@ -1713,7 +1713,12 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
 
     // standalone 进程内直跑：跳客体 main 前预置快捷栏（回游戏库）。
     // 多任务 LiveProcess 路径不装（快捷栏是进程内直跑形态的一部分）。
-    if (!isLiveProcess) {
+    // 内置 SideStore 也不装：它有自己的返回路径（SideStoreSupport 在其
+    // My Apps 页注入 escape 图标回库），不是游戏、不需要回库浮钮；
+    // 且快捷栏一次绑定场景不迁移，SideStore 的 scene 切换会让它绑到
+    // 非前台 scene——渲染可见但收不到触摸（真机实测点不动）。连带停掉
+    // 的游玩时长心跳对 SideStore 本就是误计（伪会话永远不会正常结清）。
+    if (!isLiveProcess && !isSideStore) {
         LCQuickBarInstall();
     }
 

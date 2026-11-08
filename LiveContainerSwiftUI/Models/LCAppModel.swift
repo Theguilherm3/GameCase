@@ -384,7 +384,11 @@ class LCAppModel: ObservableObject, Hashable {
         // 早退分支（已运行、多任务窗口已存在、转交其他 LC 副本——那些情形
         // 要么本局已在计、要么由接手副本在它自己的漏斗打戳），启动派发只剩
         // 下方 JIT / 经典模式两条路，只在这里打一次不会重复计。
-        LCPlayStats.beginSession(bundleId: bundleIdOverride ?? bundleIdentifier)
+        // 内置 SideStore 不计游玩时长：它不是游戏，且其会话永远不会被
+        // 正常结清（无快捷栏回库动作），从源头不产生伪会话。
+        if bundleIdOverride != "builtinSideStore" {
+            LCPlayStats.beginSession(bundleId: bundleIdOverride ?? bundleIdentifier)
+        }
 
         var jitNeeded = appInfo.isJITNeeded || appInfo.is32bit
         if let forceJIT {

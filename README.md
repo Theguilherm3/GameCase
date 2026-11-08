@@ -74,6 +74,7 @@ GameCase 是一个专为 iOS 移植游戏设计的侧载游戏容器。它基于
 Release 同时提供 `GameCase+SideStore.ipa`：内置了完整的 SideStore，整个应用只占一个免费签名名额。它的用处是**内签**——在手机上用你的 Apple ID 给 GameCase 本体续签、更新，以及签名安装其它应用，全程不需要电脑。
 
 - **首次设置**：在「设置」页点「打开内置 SideStore」，在内置 SideStore 的设置中登录 Apple ID，连接 LocalDevVPN 后到「My Apps」点一次「Refresh All」；回到 GameCase「设置」页点「从 SideStore 导入证书」，按钮变为「移除证书」即已打通，免 JIT 模式随之可用。
+- **返回 GameCase**：在内置 SideStore 的「My Apps」页点左上角的退出（escape）图标即可回库（或用应用切换器）。News 页条目上的 OPEN 不是返回入口，点了不会有反应。
 - **续签**：免费证书临近到期时，打开内置 SideStore 点「Refresh All」即可为 GameCase 本体续签。
 - **更新**：把新版 GameCase 的 IPA 在内置 SideStore 中安装即覆盖更新，游戏与数据保留。
 
