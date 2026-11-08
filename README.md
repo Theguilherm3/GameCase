@@ -51,7 +51,7 @@ GameCase 是一个专为 iOS 移植游戏设计的侧载游戏容器。它基于
 
 ## 装机须知
 
-- **签名证书类型**：GameCase 必须用**开发者证书（Development）**签名安装。市面商家普遍售卖的是分发证书（Distribution）或企业证书，这类证书签出来打开会提示「未使用开发者证书签名」、点游戏闪退，改设置没用。**购买证书前请先向商家确认证书类型是开发者证书，再下单。**
+- **签名证书要求**：GameCase 须以开发者证书（Development Certificate）签名安装。市面在售证书多为分发证书（Distribution Certificate）或企业证书（Enterprise Certificate）：以此类证书签名，应用打开时将提示「未使用开发者证书签名」，且游戏无法正常启动。购买证书前，请务必向商家确认证书类型为开发者证书。签名方式可使用 [LCSign](https://www.sign.lc) 导入证书签名，或以个人 Apple ID 通过 [SideStore](https://sidestore.io) / [AltStore](https://altstore.io) 免费签名安装（个人签名同为开发者证书）。
 - **全新 App 身份**：GameCase（`com.tiaoge.gamecase`）在系统眼里是一个全新 App，与旧 LiveContainer 并存、互不影响。首次使用需重新导入证书、游戏 IPA 与数据包各一次；确认一切正常后，可删除旧容器。
 - **签名标识必须与证书对齐**：签名工具里改用的标识要与证书的 App ID 一致，否则会出现文件选择器点不动/无回调、数据包选不了、证书导入失败等问题。本仓库 Release 提供未签名 IPA，请用自己的开发者证书签名安装，并作为新项目导入签名工具，不要复用被第三方签名服务改过标识的旧项目。
 - **数据包手动放置**：也可以不用 App 内导入，直接在「文件」App 里把 `romfs.img` 放进 `GameCase → Data → Application → <游戏名> → Documents` 文件夹内（注意是游戏容器夹里面的 Documents，不是放在容器夹根目录）。
