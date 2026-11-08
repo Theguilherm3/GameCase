@@ -73,10 +73,13 @@ GameCase 是一个专为 iOS 移植游戏设计的侧载游戏容器。它基于
 
 Release 同时提供 `GameCase+SideStore.ipa`：内置了完整的 SideStore，整个应用只占一个免费签名名额。它的用处是**内签**——在手机上用你的 Apple ID 给 GameCase 本体续签、更新，以及签名安装其它应用，全程不需要电脑。
 
-- **首次设置**：在「设置」页点「打开内置 SideStore」，在内置 SideStore 的设置中登录 Apple ID，连接 LocalDevVPN 后到「My Apps」点一次「Refresh All」；回到 GameCase「设置」页点「从 SideStore 导入证书」，按钮变为「移除证书」即已打通，免 JIT 模式随之可用。
+- **首次设置**：在「设置」页点「打开内置 SideStore」，在内置 SideStore 的设置中登录 Apple ID，连接 LocalDevVPN；然后在其设置页进入「Pairing File Management（配对文件管理）」点「Wireless Pairing（无线配对）」，保持 LocalDevVPN 连接即可直接在手机上完成配对、生成配对文件，全程不需要电脑（配对文件只需生成一次，之后的刷新都走它）；再到「My Apps」点一次「Refresh All」；回到 GameCase「设置」页点「从 SideStore 导入证书」，按钮变为「移除证书」即已打通，免 JIT 模式随之可用。
 - **返回 GameCase**：在内置 SideStore 的「My Apps」页点左上角的退出（escape）图标即可回库（或用应用切换器）。News 页条目上的 OPEN 不是返回入口，点了不会有反应。
 - **续签**：免费证书临近到期时，打开内置 SideStore 点「Refresh All」即可为 GameCase 本体续签。
 - **更新**：把新版 GameCase 的 IPA 在内置 SideStore 中安装即覆盖更新，游戏与数据保留。
+- **登录报 -80045（This action cannot be completed at this time）**：这是苹果 2026 年 10 月起收紧登录校验的结果（递交的设备身份与自报信息不一致），与账号密码无关。改一次设置即可（改完后刷新、注册都走这套配置）：
+  - 中文版（GameCase 内置）：「设置」→「用户自定义」关掉「设备端 Anisette」并立即重启 →「设置」→「Anisette 服务器」选 SideStore (new)、关掉「启用自动轮换」→「用户自定义」→「Anisette 客户端配置」→「远程服务器同步」→「另存为覆盖项」再「保存覆盖项」（同步失败就手动填 Client Info `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>`、User Agent `akd/1.0 CFNetwork/808.1.4`）→「用户自定义」→「重置 adi.pb」→ 重新登录；双重验证用其他苹果设备上弹出的验证码，不要等短信。
+  - 英文原版（独立 SideStore）：Settings → User Customizations → turn off On-Device Anisette → Restart Now → Settings → Anisette Servers → select SideStore (new), disable Enable Auto Rotation → User Customizations → Anisette Client Configuration → Remote Server Sync → Save as Overrides → Save Overrides (if sync fails, set Client Info to `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>` and User Agent to `akd/1.0 CFNetwork/808.1.4` manually) → Reset adi.pb → sign in again; use the 2FA code shown on a trusted Apple device, not SMS.
 
 ## 致谢与开源来源
 
