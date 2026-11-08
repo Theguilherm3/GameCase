@@ -31,13 +31,12 @@
 //  写者。两行口径相同：都由容器目录现状决定、GC 独占维护、玩家手
 //  写同名行在下次启动被维护结果覆盖。
 //
-//  云存档的 DM_SAVE_SYNC 行同样搭这条通道（LCGameCloudSaves，候选
-//  B 复刻 NX2 壳通道）：同一次维护里排在 DM_CHEATS 之后第三个处
-//  理——值由 GC 保管的书签现解析（开启且可解析才给所选文件夹路
-//  径、并在 GC 进程内持有该文件夹的 security scope；未配置 / 已
-//  关闭 / 书签失效则删行），引擎对 env 已设值优先不覆盖，同步本
-//  体全在引擎内（save_sync），GC 不写任何文件级同步。口径与其余
-//  两行相同：GC 独占维护、手写同名行下次启动被覆盖。
+//  云存档不走 env（LCGameCloudSaves）：同一次维护里只把旧 env 通
+//  道（PR #31/#32）可能写过的 DM_SAVE_SYNC 残行删掉——留着它会
+//  压过客体自己的书签路径。云存档配置改经客体偏好书签同步（客体
+//  进程自己持 security scope，env 递裸路径已被真机日志证伪为
+//  EPERM），细节见 LCGameCloudSaves 文件头；同步本体仍全在引擎
+//  内（save_sync），GC 不写任何文件级同步。
 //
 //  导入与管理（设置页「Mod」组）：导入把所选文件夹按扫描同规则校验
 //  后 staging 换入 Documents/mods/；管理动作（启停 / 排序 / 删除）只
@@ -316,15 +315,15 @@ enum LCGameMods {
 
     // MARK: env.txt 维护
 
-    /// 按容器当前 mods / cheats 现状与云存档配置、同一次维护里顺
-    /// 序维护其 Documents/env.txt 的四行：先 DM_ROMFS_OVERLAY
-    /// （mods 现算，无可用 mod 删行）、次 DM_CHEATS（cheats 夹内有
-    /// 文件名合规的 .txt 才写 cheats、否则删行，判据见
-    /// LCGameCheats）、再 DM_SAVE_SYNC（云存档书签现解析，开启且
-    /// 可解析才写所选文件夹路径、否则删行，判据与 scope 持有见
-    /// LCGameCloudSaves）、末 DM_LAUNCHER（恒 0，见下）。四行共用
-    /// maintainEnvLine 这一个写者，他行逐字保留。维护失败静默吞
-    /// 掉：都只是增强 / 呈现层的事，绝不能挡游戏启动。
+    /// 按容器当前 mods / cheats 现状、同一次维护里顺序维护其
+    /// Documents/env.txt 的三行：先 DM_ROMFS_OVERLAY（mods 现
+    /// 算，无可用 mod 删行）、次 DM_CHEATS（cheats 夹内有文件名
+    /// 合规的 .txt 才写 cheats、否则删行，判据见 LCGameCheats）、
+    /// 末 DM_LAUNCHER（恒 0，见下）。三行共用 maintainEnvLine 这
+    /// 一个写者，他行逐字保留。同一漏斗里另有两件不经 env 的事：
+    /// 删除旧云存档通道残留的 DM_SAVE_SYNC 行、把云存档书签同步
+    /// 进客体偏好（均见下）。维护失败静默吞掉：都只是增强 / 呈现
+    /// 层的事，绝不能挡游戏启动。
     static func refreshEnvOverlay(container: LCContainer, bundleIdentifier: String) {
         guard let titleID = titleID(bundleIdentifier: bundleIdentifier) else { return }
         let documents = container.containerURL.appendingPathComponent("Documents")
@@ -332,7 +331,13 @@ enum LCGameMods {
         let overlay = overlayValue(in: documents.appendingPathComponent("mods", isDirectory: true), titleID: titleID)
         maintainEnvLine(envFile: envFile, key: envKey, value: overlay)
         maintainEnvLine(envFile: envFile, key: LCGameCheats.envKey, value: LCGameCheats.cheatsEnvValue(in: documents))
-        maintainEnvLine(envFile: envFile, key: LCGameCloudSaves.envKey, value: LCGameCloudSaves.envValue(forBundleIdentifier: bundleIdentifier))
+        // 云存档不经 env：删掉旧通道（PR #31/#32）写过的残行（留
+        // 着会压过客体自己的书签路径）；配置改经客体偏好同步——
+        // 客体进程自己解析书签、自己持 security scope（GC 进程持
+        // 的授予递不过交棒，env 递裸路径真机实证写回 EPERM），细
+        // 节见 LCGameCloudSaves 文件头。
+        maintainEnvLine(envFile: envFile, key: LCGameCloudSaves.legacyEnvKey, value: nil)
+        LCGameCloudSaves.syncGuestBookmark(container: container, bundleIdentifier: bundleIdentifier)
         // GC 恒在 env 里关客体自带启动页：GC 的设置页就是那套设置
         // 的呈现层，库里点开应当直进游戏。客体语义（nxnative
         // dm/ios main.m boot_env + Launcher.swift）：Documents/

@@ -2,77 +2,85 @@
 //  LCGameCloudSaves.swift
 //  LiveContainerSwiftUI
 //
-//  云存档接入（候选 B：复刻 NX2Apple 壳通道）：同步本体是客体引擎自带
-//  的 save_sync（dm/host/save_sync.c + iOS 层 SaveSync.m/CloudSaves.m，
-//  NX2 引擎与 nxnative main 同源同版），GC 一行文件级同步都不写——本
-//  文件只补引擎缺的「配置段」三件事：让玩家选一次文件夹、替他保管
-//  security-scoped 书签、每次启动前把文件夹路径递给引擎。
+//  云存档接入：同步本体是客体引擎自带的 save_sync（dm/host/
+//  save_sync.c + iOS 层 CloudSaves.m，NX2 引擎与 nxnative main 同
+//  源同版），GC 一行文件级同步都不写——本文件只补引擎缺的「配置
+//  段」：让玩家在 GC 里选一次文件夹、替他保管 security-scoped 书
+//  签、每次启动前把书签同步进客体自己的偏好，让客体进程照单机版
+//  原流程自己解析、自己持 scope、自己同步。
 //
-//  引擎语义（fork main 8d88b2c7 源码实证，直接据此实现）：
-//  - 开关只有环境变量 DM_SAVE_SYNC：值 = 玩家所选文件夹的路径（根文
-//    件夹原样，不要自己拼子夹），引擎在 cloud_file() 里自己拼
-//    <TITLEID 大写>/save.dmsync（所选夹本身就叫该 TITLEID 时不套第
-//    二层）；空 / "0" = 关；"icloud" 是 Mac 专用关键词，iOS 设了只打
-//    日志关掉，GC 永不写它。云端布局与 Mac / 单机版 / NX2 壳天然互
-//    通，三方选同一个文件夹即共用同一份 save.dmsync。
+//  为什么走客体偏好、而不是 env 递路径（PR #31/#32 的 env 通道已
+//  被真机日志证伪，log-84 存档）：env 版链路全通——boot_env 读到
+//  DM_SAVE_SYNC、引擎打出 `save sync: on: <夹>/<TITLEID>/
+//  save.dmsync`、本机存档也判定要上云——最后写回恒以 errno=1
+//  (EPERM) 失败。根因：security scope 是按进程持的授予；GC 界面
+//  进程与客体游戏进程是两个进程实例（启动要交棒重拉），GC 在自
+//  己进程里 startAccessing 持有的授予递不到客体进程手里，客体只
+//  拿到一个裸路径、碰不了沙箱外文件夹。而单机版能成，靠的正是
+//  客体进程自己在 dm_cloud_saves_env() 里解析自己偏好里的书签、
+//  自己 startAccessing 并整场持有（CloudSaves.m 的 opened「从不
+//  主动停」）——那一步只能在客体进程内发生，GC 替代不了，只能把
+//  书签送进它读得到的地方。
+//
+//  引擎语义（fork main 源码实证，直接据此实现）：
 //  - front_ios.m 的 startGame 在首次存档挂载前无条件调
-//    dm_cloud_saves_env()（CloudSaves.m）：DM_SAVE_SYNC 若已由 env
-//    文件 / 启动环境给出（且不是它自己上次设的），env 优先、它直接
-//    返回不动——依据行 CloudSaves.m: `if (getenv("DM_SAVE_SYNC") &&
-//    !fromPick) return;`。所以 GC 经 env.txt 递路径是引擎正路；客体
-//    boot_env() 先读容器 Documents/env.txt（NX2 引擎树 main.m 同一
-//    实现，行 247/386），时序与 Mod / 金手指维护相同（启动派发前在
-//    runApp 漏斗里维护，客体读到时已是维护结果）。
+//    dm_cloud_saves_env()（CloudSaves.m）：DM_SAVE_SYNC 若已由
+//    env 给出（且不是它自己上次设的）它直接返回——所以旧 env 行
+//    必须清掉，否则永远压过书签路径。env 不在场时它读标准偏好
+//    域的 cloudSavesBookmark 书签（= 客体容器 Library/Preferences/
+//    <bundleId>.plist，正是 GC 设置页经 LCGamePrefs 写 launcher.*
+//    的同一份文件）：解析成功即在客体进程内 startAccessing 整场
+//    持有、setenv DM_SAVE_SYNC=路径（fromPick）；解析失败打日志
+//    关云存档、不挡启动；系统报 stale 时它还会把新书签回写同一
+//    键（GC 下次维护以自己的记录为准再同步一次，同夹同值不冲突）。
+//  - 云端布局 <所选夹>/<TITLEID 大写>/save.dmsync（引擎 cloud_file
+//    () 自拼，所选夹本身就叫该 TITLEID 时不套第二层），与 Mac /
+//    单机版 / NX2 壳天然互通：三方选同一文件夹即共用同一份包——
+//    本文件同步给客体的书签与玩家在单机版启动器里自选的是同一
+//    个键、同一个文件夹，语义完全一致。
 //  - 同步时机全自动、没有手动同步概念：首次存档挂载拉取、每次
-//    Commit 后 sender 线程静默 3 秒打包推送、切后台 20 秒刷盘；冲突
-//    按 <DM_SAVE>.sync 的 base 哈希三方比对，两边都变了比包内最新
-//    mtime、新者赢、输家先整体备份到 <DM_SAVE>-backups（与 GC 导入
-//    备份同一个 save-backups 目录，引擎命名为「日期 时间 local|
-//    cloud」，GC 的展示 / 清理不要误删）。
-//  - iOS 上光有路径不够：文件夹在沙箱外，必须有进程内的 security
-//    scope 授予引擎才读写得了。单机版靠启动器选夹的书签由客体自己
-//    解析持 scope；壳形态靠壳进程解析持 scope、同进程的引擎使用。
-//    GC 与客体同进程直跑，本文件的 envValue 在启动维护时解析书签并
-//    在 GC 进程内持有 scope——与壳形态同构。
+//    Commit 后 sender 线程静默 3 秒打包推送、切后台 20 秒刷盘；冲
+//    突按 <DM_SAVE>.sync 的 base 哈希三方比对，新者赢、输家先整
+//    体备份到 <DM_SAVE>-backups（与 GC 导入备份同一个
+//    save-backups 目录，引擎命名为「日期 时间 local|cloud」，GC
+//    的展示 / 清理不要误删）。
 //
 //  书签保管（宿主侧、按游戏一份，与 LCCustomCoverStore 的「宿主
 //  Documents 下按 bundleId 一游戏一文件」同法）：
 //  Documents/CloudSaves/<bundleId>.plist，内容 {bookmark: Data,
-//  folderName: String, off: Bool}。书签与创建它的 App 签名身份绑定：
-//  GC 重签（换证书）后旧书签解析失败是机制固有属性（单机版 / 壳同
-//  样），本文件一律按「失效」处理——启动维护不写 env 行（视为未配
-//  置），设置页提示重新选择，绝不阻塞启动、绝不崩溃。系统报 stale
-//  但仍能解析的（同签名下文件夹移动等），解析时顺手以新书签重写
-//  记录（与 NX2 BookmarkStore 同法）。玩家在单机版 / 壳里选过的书
-//  签不在 GC 的域里、也必然 stale，GC 不读不搬，只用自己进程里选
-//  的这一份。
+//  folderName: String, off: Bool}。书签必须带 security scope 造
+//  （PR #32 教训：不带的能解析回路径、却不携带授予）。书签与创
+//  建它的 App 签名身份绑定：GC 与客体同属一个签名 App（客体跑
+//  在 GC 的进程身份下），GC 造的书签客体解析得了；GC 重签（换
+//  证书）后旧书签解析失败是机制固有属性（单机版同理），一律按
+//  「失效」处理——启动维护删客体键（视为未配置），设置页提示重
+//  新选择，绝不阻塞启动、绝不崩溃。系统报 stale 但仍能解析的，
+//  解析时顺手以新书签重写记录。
 //
-//  关闭语义：设置页「关闭云存档」只置 off 标记（书签保留，重新开
-//  启不用再选夹）；「移除」删整份记录。两种情形下次启动维护都会删
-//  掉 env.txt 的 DM_SAVE_SYNC 行，引擎即关。管理动作只动记录本
-//  身、绝不直接写 env.txt——一切效果经启动前维护生效，与 Mod /
-//  金手指同一模式。
-//
-//  env 维护与 Mod / 金手指共用单一写者：LCGameMods.maintainEnvLine
-//  是 env.txt 的唯一行级写者，LCGameMods.refreshEnvOverlay 在同一
-//  次维护里继 DM_ROMFS_OVERLAY、DM_CHEATS 之后维护 DM_SAVE_SYNC
-//  行——本文件只提供 envValue（现解析书签 + 持 scope + 给路径），
-//  不碰 env.txt。与 env 锁定逻辑的关系同另两行：这行由 GC 独占维
-//  护，玩家手写的同名行在下次启动被维护结果覆盖。
-//
-//  scope 持有与释放：静态持有一份（同一时刻只跑一款游戏，与串行
-//  单开同构）。经典模式下进程随游戏退出被系统回收、新进程回库，
-//  持有自然终结（引擎自己的 CloudSaves.m 也是「从不主动停、进程
-//  随游戏退出」同法）；下一次启动维护（无论哪款游戏）先释放上一
-//  份再解析新的一份（与 NX2 BookmarkStore 的替换语义同法），设置
-//  页里关闭 / 移除 / 改选文件夹时也即时释放被替换的那一份。
+//  交付与关闭语义：启动维护（LCGameMods.refreshEnvOverlay 同一漏
+//  斗）里调 syncGuestBookmark——GC 有记录且开启且书签可用：把记
+//  录的书签 Data 写进客体偏好 cloudSavesBookmark 键；已关闭 / 书
+//  签失效：删掉这个键（= 引擎的 dm_clear_cloud_saves）。「关闭」
+//  只置 off 标记（记录里的书签保留，重新开启不用再选夹）；「移
+//  除」删整份记录——但已移除（无记录）时启动维护不碰客体键：没
+//  有 GC 记录 = 这款游戏的云存档不归 GC 管，玩家可能在客体自带
+//  启动器里自选过文件夹，那个键是他的配置，GC 不删。管理动作只
+//  动记录本身，一切效果经下次启动维护生效，与 Mod / 金手指同一
+//  模式。「设置下次启动生效」的设置页口径不变。
 //
 
 import SwiftUI
 import UniformTypeIdentifiers
 
 enum LCGameCloudSaves {
-    static let envKey = "DM_SAVE_SYNC"
+    /// 旧 env 通道的键：PR #31/#32 曾用它递路径，已证伪——启动维护
+    /// 时只负责把玩家机器上可能残留的这一行删掉（留着会压过书签路
+    /// 径，见文件头），不再写入。
+    static let legacyEnvKey = "DM_SAVE_SYNC"
+
+    /// 客体偏好里的书签键：与引擎 CloudSaves.m 的 kCloudSaves 同名
+    /// 同义——启动器自选文件夹时写的就是它，GC 同步的也是它。
+    static let guestBookmarkKey = "cloudSavesBookmark"
 
     /// 书签造 / 解的 scope 选项：Swift 侧的 .withSecurityScope
     /// （URL / NSURL 两套 OptionSet 静态成员都是）在本仓的 iOS 15
@@ -142,7 +150,6 @@ enum LCGameCloudSaves {
     }
 
     static func removeRecord(forBundleIdentifier bundleIdentifier: String) {
-        releaseHeldScope()
         try? FileManager.default.removeItem(at: fileURL(forBundleIdentifier: bundleIdentifier))
     }
 
@@ -171,7 +178,7 @@ enum LCGameCloudSaves {
     /// 授予探针：解析出的 URL 真持 startAccessing 一次——返 true 才
     /// 说明书签带着 security scope 授予；返 false = 只有路径没有授
     /// 予（无 scope 的旧书签 / 授予已失），按失效处理。探完即停，
-    /// 不留持有（真正的持有在启动维护的 envValue 里）。
+    /// 不留持有（真正的持有在客体进程内、由引擎自己完成）。
     private static func grantsAccess(_ url: URL) -> Bool {
         guard url.startAccessingSecurityScopedResource() else {
             return false
@@ -206,7 +213,6 @@ enum LCGameCloudSaves {
         guard let bookmark = freshBookmark(for: url) else {
             return false
         }
-        releaseHeldScope()
         save(Record(bookmark: bookmark, folderName: url.lastPathComponent, isOff: false),
              forBundleIdentifier: bundleIdentifier)
         return true
@@ -219,13 +225,10 @@ enum LCGameCloudSaves {
         }
         record.isOff = off
         save(record, forBundleIdentifier: bundleIdentifier)
-        if off {
-            releaseHeldScope()
-        }
     }
 
-    /// 当前状态：无记录 / 关 / 开 / 失效。解析只为判定，不持 scope
-    /// （真正持有在启动维护的 envValue 里）。
+    /// 当前状态：无记录 / 关 / 开 / 失效。解析只为判定——授予的持有
+    /// 发生在客体进程内（引擎自己 startAccessing），GC 侧不持。
     static func state(forBundleIdentifier bundleIdentifier: String) -> State {
         guard let record = record(forBundleIdentifier: bundleIdentifier) else {
             return .notConfigured
@@ -238,36 +241,28 @@ enum LCGameCloudSaves {
             : .stale(folderName: record.folderName)
     }
 
-    // MARK: 启动维护（scope 持有 + env 值）
+    // MARK: 启动维护（书签同步进客体偏好）
 
-    /// 进程内持有的那一份 scope（串行单开，同一时刻至多一款在跑）
-    private static var heldScopeURL: URL?
-
-    private static func releaseHeldScope() {
-        heldScopeURL?.stopAccessingSecurityScopedResource()
-        heldScopeURL = nil
-    }
-
-    /// DM_SAVE_SYNC 的值：开启且书签可解析时为所选文件夹的路径
-    /// （根文件夹原样——TITLEID 子夹由引擎自己拼），并把这个文件
-    /// 夹的 security scope 在 GC 进程内持有到下一次维护 / 进程结
-    /// 束（客体同进程，引擎读写云端文件夹靠它）。未配置 / 已关闭 /
-    /// 书签失效一律返回 nil（维护方据此删 env 行 = 引擎关），失效
-    /// 绝不挡启动。
-    static func envValue(forBundleIdentifier bundleIdentifier: String) -> String? {
-        releaseHeldScope()
-        guard let record = record(forBundleIdentifier: bundleIdentifier), !record.isOff,
-              let url = resolve(record, forBundleIdentifier: bundleIdentifier) else {
-            return nil
+    /// 把 GC 记录同步进客体自己的偏好（cloudSavesBookmark 键，写
+    /// 通道 = LCGamePrefs，与 launcher.* 同一份 plist）：开启且书
+    /// 签可用 → 写入记录的书签（resolve 触发的 stale 自愈会刷新记
+    /// 录，写的是自愈后的最新一份）；已关闭 / 书签失效 → 删键（=
+    /// 引擎关，失效不把坏书签递给客体让它每启打一遍失败日志）。
+    /// GC 没有这款游戏的记录 → 完全不碰这个键（见文件头：那是玩
+    /// 家在客体启动器里自选的配置，不归 GC 管）。同步失败静默：
+    /// 云存档只是增强，绝不能挡游戏启动。
+    static func syncGuestBookmark(container: LCContainer, bundleIdentifier: String) {
+        guard let record = record(forBundleIdentifier: bundleIdentifier) else {
+            return
         }
-        // resolve 已过授予探针，这里再持一次并认结果：万一授予在两
-        // 次调用间失效，返 false 就当未配置（删 env 行），不把一条
-        // 引擎碰不到的路径递出去假装在同步
-        guard url.startAccessingSecurityScopedResource() else {
-            return nil
+        let prefs = LCGamePrefs(container: container, bundleIdentifier: bundleIdentifier)
+        guard !record.isOff,
+              resolve(record, forBundleIdentifier: bundleIdentifier) != nil,
+              let current = self.record(forBundleIdentifier: bundleIdentifier) else {
+            prefs.setRawValue(nil, forKey: guestBookmarkKey)
+            return
         }
-        heldScopeURL = url
-        return url.path
+        prefs.setRawValue(current.bookmark, forKey: guestBookmarkKey)
     }
 }
 

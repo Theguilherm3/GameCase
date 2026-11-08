@@ -284,6 +284,31 @@ final class LCGamePrefs {
         save()
     }
 
+    /// 写 / 删一个任意键（云存档把书签 Data 同步进客体的
+    /// cloudSavesBookmark 键用）：值与现存一致时不落盘，避免每次
+    /// 启动维护都重写整份 plist。
+    func setRawValue(_ value: Any?, forKey key: String) {
+        let old = values[key]
+        let unchanged: Bool
+        switch (old, value) {
+        case (nil, nil):
+            unchanged = true
+        case let (o as Data, v as Data):
+            unchanged = o == v
+        case let (o as NSObject, v as NSObject):
+            unchanged = o == v
+        default:
+            unchanged = false
+        }
+        if unchanged { return }
+        if let value {
+            values[key] = value
+        } else {
+            values.removeValue(forKey: key)
+        }
+        save()
+    }
+
     /// 恢复默认：清掉档案内全部变量的已保存选择
     func resetLauncherValues(_ settings: [LCLauncherSetting]) {
         for s in settings {
