@@ -148,14 +148,21 @@ struct LCSettingsView: View {
                             Text("lc.settings.removeCertificate".loc)
                         }
                     }
-                    if store == .AltStore || store == .SideStore {
+                    // 显示条件在上游「宿主由 AltStore/SideStore 安装」之外
+                    // 补上内置 SideStore 存在的情况：GameCase 宿主多经
+                    // LCSign/证书安装，store 检测为 .Unknown 时上游条件
+                    // 永假，这行永远不显示，但处理函数内的内置路线
+                    // （按 sideStoreExist 读共享钥匙串）本就可用。
+                    // 名称同理：.Unknown 时 getStoreName 返回 Unknown
+                    // Store，内置场景固定显示 SideStore。
+                    if store == .AltStore || store == .SideStore || UserDefaults.sideStoreExist() {
                         Button {
                             Task{ await importCertificateFromSideStore() }
                         } label: {
                             if certificateDataFound {
-                                Text("lc.settings.refreshCertificateFromStore %@".localizeWithFormat(storeName))
+                                Text("lc.settings.refreshCertificateFromStore %@".localizeWithFormat(store == .AltStore ? storeName : "SideStore"))
                             } else {
-                                Text("lc.settings.importCertificateFromStore %@".localizeWithFormat(storeName))
+                                Text("lc.settings.importCertificateFromStore %@".localizeWithFormat(store == .AltStore ? storeName : "SideStore"))
                             }
                         }
                     }
