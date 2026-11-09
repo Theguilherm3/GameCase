@@ -16099,6 +16099,23 @@
         }
       }
     },
+    "lc.gameHome.gamepadHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "D-Pad: Select · A: Start"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "方向键选择 · A 开始"
+          }
+        }
+      }
+    },
     "lc.guestTweak.appSwitchTip %@": {
       "extractionState": "manual",
       "localizations": {

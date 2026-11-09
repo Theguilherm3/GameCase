@@ -208,6 +208,9 @@ struct LCGameHomeView: View {
     let safeSize: CGSize
     /// 库内容刷新令牌：变化即本视图 body 重跑，封面与数据包状态点按磁盘重算
     let refreshToken: Int
+    /// 列表层是否有任何弹层 / 面板盖在主页之上（设置面板、隐藏游戏页、
+    /// 数据包导入、卸载确认、JIT 流程等）：手柄导航的让位判据，列表层注入
+    let overlayPresented: Bool
 
     var onRun: (LCAppModel) -> Void
     var onSettings: (LCAppModel) -> Void
@@ -225,6 +228,16 @@ struct LCGameHomeView: View {
     @State private var playStats: [String: LCPlayStats.Entry] = [:]
     @State private var focusKey: String?
     @StateObject private var controllerMonitor = LCControllerMonitor()
+    /// 主页手柄导航输入层（十字键 / 左摇杆移选、A 开始）：handler 的
+    /// 装卸由 gamepadGateOpen 判据驱动，见 body 的 onChange
+    @StateObject private var gamepadNav = LCGamepadNavHandler()
+    /// 横屏布局标志（手柄移动语义分岔：横屏只左右切卡、竖屏走网格
+    /// 步进），由 safeSize 方向维护（与 body 的布局判据同向）
+    @State private var isLandscapeLayout = false
+    /// 手柄移动后的滚动请求令牌：竖屏 ScrollViewReader 观察它把选中
+    /// 卡滚入可见区；触摸切换聚焦不 bump、滚动位置不被抢
+    @State private var gamepadScrollToken = 0
+    @Environment(\.scenePhase) private var scenePhase
     /// 手柄页呈现状态（Phase 22 起统一走 LCSidePanelContainer 自适应
     /// 宿主：横屏 = 右侧面板、竖屏 = 整屏，形态随当前尺寸跟随、旋转
     /// 原地变形；Phase 14 的 sheet / 面板打开时二选一已废除）
@@ -304,6 +317,71 @@ struct LCGameHomeView: View {
         if focusedApp == nil, let fallback = defaultFocus {
             focusKey = key(of: fallback)
         }
+    }
+
+    // MARK: 手柄导航（主页版）
+
+    /// 手柄导航的让位判据：库非空、列表层无弹层 / 面板盖着、主页
+    /// 自身的手柄面板与状态帮助页都没开、App 在前台。任一不成立时
+    /// 输入层摘掉 handler，手柄事件不落到主页。
+    private var gamepadGateOpen: Bool {
+        !apps.isEmpty && !overlayPresented && !controllerPanelPresented
+            && stateHelpTarget == nil && scenePhase == .active
+    }
+
+    private func wireGamepadNav() {
+        gamepadNav.onMove = { direction in gamepadMove(direction) }
+        gamepadNav.onConfirm = { gamepadConfirm() }
+    }
+
+    /// 移动一格：复用现成聚焦状态（focusKey / focusedApp，不另建
+    /// 焦点模型），顺序走 orderedApps（竖屏网格与横屏牌组的共同
+    /// 视觉序）。横屏单列：左右切卡、上下不接；竖屏双列网格：
+    /// 左右 ±1、上下 ±2（列数），到边停住不绕圈。横屏切换走
+    /// setFocusFromDeck（牌组动画与停稳计时同触摸口径，轮播偏移
+    /// 由其 onChange(focusKey) 自行同步）；竖屏切换后 bump 滚动
+    /// 令牌，让 ScrollViewReader 把选中卡滚进可见区。
+    private func gamepadMove(_ direction: LCGamepadNavDirection) {
+        let list = orderedApps
+        guard let current = focusedApp, let idx = list.firstIndex(of: current) else {
+            ensureFocus()
+            return
+        }
+        let delta: Int
+        if isLandscapeLayout {
+            switch direction {
+            case .left: delta = -1
+            case .right: delta = 1
+            case .up, .down: return
+            }
+        } else {
+            switch direction {
+            case .left: delta = -1
+            case .right: delta = 1
+            case .up: delta = -2
+            case .down: delta = 2
+            }
+        }
+        let target = idx + delta
+        guard list.indices.contains(target) else {
+            return
+        }
+        if isLandscapeLayout {
+            setFocusFromDeck(list[target])
+        } else {
+            setFocus(list[target])
+            gamepadScrollToken += 1
+        }
+    }
+
+    /// A 键 = 开始：与竖屏底部开始按钮同一入口（onRun，列表层
+    /// wired 到 runGame）、同一可用条件（有聚焦且没有游戏在跑）；
+    /// 横屏侧等价于点已停稳的聚焦卡（deckTap 的启动路）。
+    private func gamepadConfirm() {
+        guard let app = focusedApp, !app.isAppRunning else {
+            return
+        }
+        onRun(app)
     }
 
     // MARK: 横屏轮播的顺序与聚焦（NX2 CoverFlow 移植辅助）
@@ -450,6 +528,9 @@ struct LCGameHomeView: View {
                 if installProgressVisible {
                     installPill(safeTop: safeAreaInsets.top)
                 }
+                if gamepadNav.hasController && !apps.isEmpty {
+                    gamepadHintBar
+                }
                 // 手柄页自适应宿主（Phase 22）：横屏 = 右侧抽屉面板
                 // （主页留在下层被压暗）、竖屏 = 整屏，形态随旋转跟随，
                 // 语义与容器设置 / 游戏设置同轨
@@ -485,6 +566,13 @@ struct LCGameHomeView: View {
             LCPlayStats.reconcileOpenSession()
             playStats = LCPlayStats.allEntries()
             sweepCoverFetches()
+            // 手柄导航接线：回调注入 + 按当前判据决定是否装 handler
+            wireGamepadNav()
+            isLandscapeLayout = safeSize.width > safeSize.height
+            gamepadNav.setActive(gamepadGateOpen)
+        }
+        .onDisappear {
+            gamepadNav.setActive(false)
         }
         .onChange(of: refreshToken) { _ in
             playStats = LCPlayStats.allEntries()
@@ -492,7 +580,46 @@ struct LCGameHomeView: View {
         }
         .onChange(of: apps.map { key(of: $0) }) { _ in
             ensureFocus()
+            // 库增删后重注回调，闭包捕获的 apps 快照不许过期
+            wireGamepadNav()
         }
+        .onChange(of: gamepadGateOpen) { open in
+            gamepadNav.setActive(open)
+        }
+        .onChange(of: safeSize) { newSize in
+            isLandscapeLayout = newSize.width > newSize.height
+        }
+    }
+
+    /// 手柄提示条（手柄连着时才出现）：底部安全区上方的小胶囊，
+    /// 竖屏避开底部开始栏（浮在其上方）、横屏贴底。样式照安装
+    /// 胶囊的两分支（iOS 26 玻璃 / 半透明黑回退）。
+    private var gamepadHintBar: some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 7) {
+                Image(systemName: "dpad")
+                    .font(.system(size: 13))
+                Text("lc.gameHome.gamepadHint".loc)
+                    .font(.system(size: 12.5, weight: .medium))
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 7)
+            .modifier { view in
+                if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                    view
+                        .foregroundColor(.primary)
+                        .glassEffect(.regular, in: .capsule)
+                } else {
+                    view
+                        .foregroundColor(.white)
+                        .background(Capsule().fill(Color.black.opacity(0.72)))
+                        .overlay(Capsule().strokeBorder(LCGameTheme.chipBorder, lineWidth: 1))
+                }
+            }
+            .padding(.bottom, isLandscapeLayout ? safeAreaInsets.bottom + 10 : safeAreaInsets.bottom + 76)
+        }
+        .allowsHitTesting(false)
     }
 
     /// 联网封面懒抓（Phase 19）：主页出现 / 库刷新时逐个过一遍去重入口——
@@ -787,23 +914,35 @@ struct LCGameHomeView: View {
         let m = margin(for: size)
         let heroH = max(size.height * 0.39, 280)
         return ZStack(alignment: .bottom) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    portraitHero(width: w, height: heroH, safeTop: safe.top, margin: m)
-                    portraitGames(margin: m, width: w)
-                    portraitRecent(margin: m, width: w)
-                    if multiLCStatus == 2 {
-                        Text("lc.appList.manageInPrimaryTip".loc)
-                            .font(.footnote)
-                            .foregroundColor(.gray)
-                            .padding(.horizontal, m)
-                            .padding(.top, 20)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        portraitHero(width: w, height: heroH, safeTop: safe.top, margin: m)
+                        portraitGames(margin: m, width: w)
+                        portraitRecent(margin: m, width: w)
+                        if multiLCStatus == 2 {
+                            Text("lc.appList.manageInPrimaryTip".loc)
+                                .font(.footnote)
+                                .foregroundColor(.gray)
+                                .padding(.horizontal, m)
+                                .padding(.top, 20)
+                        }
+                        // 给底部浮动开始栏让位
+                        Color.clear.frame(height: 118)
                     }
-                    // 给底部浮动开始栏让位
-                    Color.clear.frame(height: 118)
+                }
+                .ignoresSafeArea(edges: .top)
+                // 手柄移动后把选中卡滚入可见区：仅手柄路径 bump 令牌，
+                // 触摸点选切聚焦不触发、滚动位置不被抢。锚点是网格卡
+                // 的 id（portraitGames 给每张卡打了同名 id）
+                .onChange(of: gamepadScrollToken) { _ in
+                    if let app = focusedApp {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            proxy.scrollTo(key(of: app), anchor: .center)
+                        }
+                    }
                 }
             }
-            .ignoresSafeArea(edges: .top)
             portraitBottomBar(margin: m, safeBottom: safe.bottom)
         }
     }
@@ -941,6 +1080,16 @@ struct LCGameHomeView: View {
                                 statusDot(color: gameState(app).themeColor, radius: 5)
                                     .padding(10)
                             }
+                            // 手柄焦点描边：手柄连着时给聚焦卡加奶油
+                            // 描边（动态色、深浅两模式都成立）；无手
+                            // 柄时不画，与现行界面逐字一致
+                            .overlay {
+                                if gamepadNav.hasController, focusedApp == app {
+                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        .strokeBorder(LCGameTheme.creamColor, lineWidth: 2.5)
+                                        .allowsHitTesting(false)
+                                }
+                            }
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 setFocus(app)
@@ -957,6 +1106,8 @@ struct LCGameHomeView: View {
                             .fill(focusedApp == app ? LCGameTheme.nxCream : Color.clear)
                             .frame(width: columnWidth, height: 3)
                     }
+                    // 手柄滚动锚点（ScrollViewReader.scrollTo 的目标 id）
+                    .id(key(of: app))
                 }
             }
             .padding(.horizontal, m)
@@ -979,6 +1130,15 @@ struct LCGameHomeView: View {
                     LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
                         .frame(width: 73, height: 41)
                         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        // 手柄焦点描边（与网格卡同口径）：聚焦游戏在
+                        // 最近行里出现时缩略图同样加奶油描边
+                        .overlay {
+                            if gamepadNav.hasController, focusedApp == app {
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .strokeBorder(LCGameTheme.creamColor, lineWidth: 2.5)
+                                    .allowsHitTesting(false)
+                            }
+                        }
                     VStack(alignment: .leading, spacing: 3) {
                         Text(app.displayName)
                             .font(.system(size: 15))
@@ -1084,6 +1244,15 @@ struct LCGameHomeView: View {
                         .frame(height: 56)
                         .frame(maxWidth: .infinity)
                         .gcStartButtonBackground()
+                        // 手柄焦点提示：手柄连着时开始钮描一圈奶油
+                        // 边，明示 A 键的目标就是它；无手柄不画
+                        .overlay {
+                            if gamepadNav.hasController {
+                                Capsule()
+                                    .strokeBorder(LCGameTheme.creamColor, lineWidth: 2)
+                                    .allowsHitTesting(false)
+                            }
+                        }
                     }
                     .buttonStyle(.plain)
                     .disabled(focusedApp == nil || (focusedApp?.isAppRunning ?? false))
@@ -1631,6 +1800,131 @@ final class LCControllerMonitor: ObservableObject {
 
     private func refresh() {
         controllers = GCController.controllers()
+    }
+}
+
+// MARK: - 手柄导航输入（游戏库主页版）
+
+enum LCGamepadNavDirection {
+    case up, down, left, right
+}
+
+/// 主页手柄导航的输入层：给每个已连接的 extendedGamepad 装
+/// valueChangedHandler，把十字键 / 左摇杆 / A 键翻译成「移动一格 /
+/// 确认」的边沿事件，回调给 LCGameHomeView 驱动现成聚焦状态。
+/// 只在主页激活（setActive(true)）时装 handler——主页让位（面板 /
+/// 弹层打开、切后台、离开主页）即摘除，手柄断开即 hasController
+/// 转假（上层据此收起提示条与焦点描边）。全仓此前没有任何地方装
+/// valueChangedHandler（手柄页的按键测试是轮询读值），不存在抢占。
+/// 摇杆防抖：触发阈值 0.55、取主导轴向定格方向，回中到 0.3 以内
+/// 才重新武装——推住不连发、推一次只动一格。十字键同样只认按下
+/// 边沿；v1 不做十字键长按连发。
+final class LCGamepadNavHandler: ObservableObject {
+    @Published private(set) var hasController = false
+
+    var onMove: ((LCGamepadNavDirection) -> Void)?
+    var onConfirm: (() -> Void)?
+
+    private var observers: [NSObjectProtocol] = []
+    private var isActive = false
+    private var pressedEdges: [String: Bool] = [:]
+    private var stickDirection: LCGamepadNavDirection?
+
+    init() {
+        refreshConnection()
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in
+            self?.refreshConnection()
+        })
+        observers.append(center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in
+            self?.refreshConnection()
+        })
+    }
+
+    deinit {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        detachHandlers()
+    }
+
+    func setActive(_ active: Bool) {
+        isActive = active
+        if active {
+            attachHandlers()
+        } else {
+            detachHandlers()
+        }
+    }
+
+    private func refreshConnection() {
+        hasController = GCController.controllers().contains { $0.extendedGamepad != nil }
+        if isActive {
+            attachHandlers()
+        }
+    }
+
+    private func attachHandlers() {
+        for controller in GCController.controllers() {
+            guard let gamepad = controller.extendedGamepad else {
+                continue
+            }
+            gamepad.valueChangedHandler = { [weak self] gamepad, _ in
+                self?.handle(gamepad)
+            }
+        }
+    }
+
+    private func detachHandlers() {
+        for controller in GCController.controllers() {
+            controller.extendedGamepad?.valueChangedHandler = nil
+        }
+        pressedEdges.removeAll()
+        stickDirection = nil
+    }
+
+    private func handle(_ gamepad: GCExtendedGamepad) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.handle(gamepad)
+            }
+            return
+        }
+        guard isActive else {
+            return
+        }
+        if edge("dpad.up", gamepad.dpad.up.isPressed) { onMove?(.up) }
+        if edge("dpad.down", gamepad.dpad.down.isPressed) { onMove?(.down) }
+        if edge("dpad.left", gamepad.dpad.left.isPressed) { onMove?(.left) }
+        if edge("dpad.right", gamepad.dpad.right.isPressed) { onMove?(.right) }
+        handleStick(gamepad.leftThumbstick)
+        if edge("buttonA", gamepad.buttonA.isPressed) { onConfirm?() }
+    }
+
+    /// 按下边沿：只在 false → true 跳变时返回 true
+    private func edge(_ name: String, _ pressed: Bool) -> Bool {
+        let was = pressedEdges[name] ?? false
+        pressedEdges[name] = pressed
+        return pressed && !was
+    }
+
+    private func handleStick(_ stick: GCControllerDirectionPad) {
+        let x = stick.xAxis.value
+        let y = stick.yAxis.value
+        let magnitude = max(abs(x), abs(y))
+        if stickDirection != nil {
+            // 已定格：等摇杆回到近中心才重新武装，推住不连发
+            if magnitude < 0.3 {
+                stickDirection = nil
+            }
+            return
+        }
+        guard magnitude > 0.55 else {
+            return
+        }
+        let direction: LCGamepadNavDirection = abs(x) > abs(y)
+            ? (x > 0 ? .right : .left)
+            : (y > 0 ? .up : .down)
+        stickDirection = direction
+        onMove?(direction)
     }
 }
 

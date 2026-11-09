@@ -240,6 +240,22 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                         safeAreaInsets: proxy.safeAreaInsets,
                         safeSize: proxy.size,
                         refreshToken: libraryRefresh,
+                        // 主页手柄导航的让位判据：本层任何面板 / 弹层
+                        // 盖在主页之上时为真（主页据此摘掉手柄 handler）
+                        overlayPresented: gameSettingsPanelItem != nil
+                            || containerSettingsPanelPresented
+                            || hiddenAppsPresented
+                            || datapackImportRequest != nil
+                            || appPendingUninstall != nil
+                            || errorShow
+                            || choosingIPA
+                            || legacySheetItem != nil
+                            || installReplaceAlert.show
+                            || runWhenMultitaskAlert.show
+                            || generatedIconStyleSelector.show
+                            || webViewUrlInput.show
+                            || installUrlInput.show
+                            || jitAlert.show,
                         onRun: { runGame(app: $0) },
                         onSettings: { openGameSettings(app: $0) },
                         onOpenDataFolder: { openGameDataFolder(app: $0) },
