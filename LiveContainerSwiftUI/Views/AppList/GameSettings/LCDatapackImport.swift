@@ -9,6 +9,7 @@
 //
 
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct LCDatapackRequest: Identifiable {
@@ -17,7 +18,8 @@ struct LCDatapackRequest: Identifiable {
 }
 
 /// 导入正文（游戏行 + 阶段内容）的实测高：内层 VStack 经背景
-/// GeometryReader 上报，供 iOS 16/17 档的 detent 定高用
+/// GeometryReader 上报，供 detent 档（iOS 16/17 全宽 + iOS 18+ 紧凑
+/// 宽度）定高用
 private struct LCDatapackBodyHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -25,19 +27,53 @@ private struct LCDatapackBodyHeightKey: PreferenceKey {
     }
 }
 
-/// 呈现瘦身的版本分工（2026-11-09 预览定版：只收尺寸，内容不动）：
-/// iOS 18+ 用 presentationSizing——iPad 上是居中表单卡（系统表单宽约
-/// 540，封顶口径与预览的约 560 一致）、高度按内容理想高贴合，状态切换
-/// 由系统重算并动画；iPhone 上仍是底部 sheet、宽随屏、高同样贴合。
-/// iOS 16/17 用正文实测高拼的 .height detent。iOS 15 不加修饰，维持
-/// 现状全高 page sheet。
+/// 呈现瘦身的分工（2026-11-09 预览定版：只收尺寸，内容不动）：
+/// regular 宽度（iPad）iOS 18+ 用 presentationSizing——居中表单卡
+/// （系统表单宽约 540，封顶口径与预览的约 560 一致）、高度按内容理想
+/// 高贴合，状态切换由系统重算并动画；其余情形（iOS 16/17 全部宽度、
+/// iOS 18+ 紧凑宽度）用正文实测高拼的 .height detent；iOS 15 不加
+/// 修饰，维持现状全高 page sheet。
+///
+/// #90 曾让 iOS 18+ 无条件走 .form.fitted，实机（iOS 27、iPhone 竖
+/// 屏）证明紧凑宽度下完全不生效、sheet 仍全高：.form 是 regular 宽
+/// 度的概念——presentationSizing 管的是 regular 宽度下居中卡的占地，
+/// 紧凑宽度下 form 与 page 无区别（UIKit 自适应呈现的一贯语义：水
+/// 平紧凑环境里 page/form sheet 都按全屏/全高呈现），高度改由
+/// detents 决定，fitted(vertical:) 没有机会收高。故 iOS 18+ 按窗口
+/// 宽度分流：regular 维持 .form.fitted 逐字不变，紧凑改走与 16/17
+/// 同一套实测 detent。
 private struct LCDatapackSheetSizingModifier: ViewModifier {
     let detentHeight: CGFloat
+
+    /// 容器尺寸类不参与判定（见 windowHorizontalSizeClass 注），读它
+    /// 只为让其变化（旋转 / 窗口形态翻转）触发 body 重算、顺带现读
+    /// 一次窗口真值。
+    @Environment(\.horizontalSizeClass) private var containerSizeClass
+
+    /// 窗口（场景）横向尺寸类真值（UIKit 现读）：sheet 内容里的
+    /// SwiftUI 环境尺寸类是容器局部的——iPad 上 sheet 容器自身即报
+    /// .compact，拿它分工会把 iPad 误判去 detent 路。分工只能按呈现
+    /// 窗口的 traits 判：iPad 全屏窗口 .regular、iPhone .compact、
+    /// iPad 分屏窄窗 .compact（按紧凑宽度同路处理，与其形态相符）。
+    /// 与 LCSidePanelSpec.windowTopSafeInset 同一路数（取 keyWindow
+    /// 真值、每次现读，旋转后即新值）。读不到窗口时回退 .regular，
+    /// 维持 .form 行为、不引入新形态。
+    private static var windowHorizontalSizeClass: UIUserInterfaceSizeClass {
+        let keyWindow = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
+        return keyWindow?.traitCollection.horizontalSizeClass ?? .regular
+    }
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
-            content.presentationSizing(.form.fitted(horizontal: false, vertical: true))
+            if Self.windowHorizontalSizeClass == .regular {
+                content.presentationSizing(.form.fitted(horizontal: false, vertical: true))
+            } else {
+                content.presentationDetents([.height(detentHeight)])
+            }
         } else if #available(iOS 16.0, *) {
             content.presentationDetents([.height(detentHeight)])
         } else {
@@ -46,9 +82,10 @@ private struct LCDatapackSheetSizingModifier: ViewModifier {
     }
 }
 
-/// 选游戏列表定高（iOS 16+）：iOS 18 档 fitted 读 frame 定列表理想高，
-/// 16/17 档与 detent 的列表区保持一致；iOS 15 不约束、列表仍占满全高
-/// sheet（现状）。封顶后列表内部滚动（见 pickerListHeight 的预算说明）。
+/// 选游戏列表定高（iOS 16+）：iOS 18 regular 档 fitted 读 frame 定列表
+/// 理想高，detent 档（16/17 全宽 + 18 紧凑宽度）与 sheetDetentHeight
+/// 的列表区保持一致；iOS 15 不约束、列表仍占满全高 sheet（现状）。
+/// 封顶后列表内部滚动（见 pickerListHeight 的预算说明）。
 private struct LCDatapackPickerHeightModifier: ViewModifier {
     let height: CGFloat
 
@@ -128,7 +165,7 @@ struct LCDatapackImportView: View {
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .onPreferenceChange(LCDatapackBodyHeightKey.self) { newHeight in
-            // 带动画赋值：切阶段时 16/17 档的 detent 高度平滑跟随、不跳变；
+            // 带动画赋值：切阶段时 detent 档的高度平滑跟随、不跳变；
             // 阈值挡住同值重复上报，避免布局回路
             guard newHeight > 0, abs(newHeight - measuredBodyHeight) > 0.5 else { return }
             withAnimation(.easeInOut(duration: 0.3)) {
@@ -208,7 +245,8 @@ struct LCDatapackImportView: View {
         min(50 + 62 * CGFloat(apps.count) + 8, 560)
     }
 
-    /// iOS 16/17 档的 detent 总高。选游戏：导航栏 44 + 列表高 + 余量 20；
+    /// detent 档（iOS 16/17 全宽 + iOS 18+ 紧凑宽度）的总高。选游戏：
+    /// 导航栏 44 + 列表高 + 余量 20；
     /// 已选游戏：正文实测高 + 92（导航栏 44 + 顶边距 20 + 底边距 20 +
     /// 余量 8）。实测到达前（首帧）用选文件前状态的正文预算 284 兜底，
     /// 测值一到即接管。预选进入（设置页 / 长按菜单）时 request.app 已定，
