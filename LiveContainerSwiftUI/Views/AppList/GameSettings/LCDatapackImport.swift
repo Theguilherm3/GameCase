@@ -16,6 +16,15 @@ struct LCDatapackRequest: Identifiable {
     let app: LCAppModel? // nil = 从库页按钮进入，先选游戏
 }
 
+/// 导入正文（游戏行 + 阶段内容）的实测高：内层 VStack 经背景
+/// GeometryReader 上报，供 iOS 16/17 档的 detent 定高用
+private struct LCDatapackBodyHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 /// 拷贝分块大小（放文件级常量：拷贝在后台线程跑，不能读主 actor 隔离的静态成员）
 private let lcDatapackChunkSize = 4 * 1024 * 1024
 
@@ -54,6 +63,10 @@ struct LCDatapackImportView: View {
     private final class CancelBox { var cancelled = false }
     @State private var cancelBox = CancelBox()
 
+    /// 正文实测高（不含顶/底边距与填充 Spacer）：阶段切换、错误文案
+    /// 换行、动态字体都会让它变化，detent 随之跟随（见 body 的挂载点）
+    @State private var measuredBodyHeight: CGFloat = 0
+
 
 
     var body: some View {
@@ -77,6 +90,29 @@ struct LCDatapackImportView: View {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        .onPreferenceChange(LCDatapackBodyHeightKey.self) { newHeight in
+            // 带动画赋值：切阶段时 16/17 档的 detent 高度平滑跟随、不跳变；
+            // 阈值挡住同值重复上报，避免布局回路
+            guard newHeight > 0, abs(newHeight - measuredBodyHeight) > 0.5 else { return }
+            withAnimation(.easeInOut(duration: 0.3)) {
+                measuredBodyHeight = newHeight
+            }
+        }
+        .modifier { content in
+            // 呈现瘦身（2026-11-09 预览定版：只收尺寸，内容与操作不动）：
+            // iOS 18+ 用 presentationSizing——iPad 上是居中表单卡（系统表单
+            // 宽约 540，封顶口径与预览的约 560 一致）、高度按内容理想高贴合，
+            // 状态切换由系统重算并动画；iPhone 上仍是底部 sheet、宽随屏、
+            // 高同样贴合。iOS 16/17 用正文实测高拼的 .height detent（公式见
+            // sheetDetentHeight）。iOS 15 不加修饰，维持现状全高 page sheet。
+            if #available(iOS 18.0, *) {
+                content.presentationSizing(.form.fitted(horizontal: false, vertical: true))
+            } else if #available(iOS 16.0, *) {
+                content.presentationDetents([.height(sheetDetentHeight)])
+            } else {
+                content
+            }
+        }
         .onAppear {
             // 本页的写侧解析（existingDatapackSize / startCopy / 文件夹
             // 导入）与读侧复核共用 defaultContainer 的同一份快照：出现
@@ -139,6 +175,28 @@ struct LCDatapackImportView: View {
         }
     }
 
+    // MARK: 呈现尺寸（瘦身）
+
+    /// 选游戏列表的高度预算：表头约 50 + 每行约 62（44 图标 + 上下行距）
+    /// + 底 8，封顶 560——游戏再多，列表在封顶高内滚动，不把 sheet 顶出
+    /// 屏幕。极端大字体下单行可能高于预算，超出部分同样靠列表内滚动
+    /// 消化、不会截断内容。
+    private var pickerListHeight: CGFloat {
+        min(50 + 62 * CGFloat(apps.count) + 8, 560)
+    }
+
+    /// iOS 16/17 档的 detent 总高。选游戏：导航栏 44 + 列表高 + 余量 20；
+    /// 已选游戏：正文实测高 + 92（导航栏 44 + 顶边距 20 + 底边距 20 +
+    /// 余量 8）。实测到达前（首帧）用选文件前状态的正文预算 284 兜底，
+    /// 测值一到即接管。预选进入（设置页 / 长按菜单）时 request.app 已定，
+    /// 直接按已选游戏算，不闪一帧选游戏高。
+    private var sheetDetentHeight: CGFloat {
+        if target == nil, request.app == nil {
+            return 44 + pickerListHeight + 20
+        }
+        return (measuredBodyHeight > 0 ? measuredBodyHeight : 284) + 92
+    }
+
     // MARK: 选游戏
 
     private var gamePickerBody: some View {
@@ -166,119 +224,142 @@ struct LCDatapackImportView: View {
                 Text("数据包要导入哪个游戏？")
             }
         }
+        .modifier { content in
+            // 列表定高（iOS 16+）：iOS 18 档 fitted 读这处 frame 定列表的
+            // 理想高，16/17 档与 detent 的列表区保持一致；iOS 15 不约束，
+            // 列表仍占满全高 sheet（现状）。封顶后列表内部滚动（见
+            // pickerListHeight 的预算说明）。
+            if #available(iOS 16.0, *) {
+                content.frame(height: pickerListHeight)
+            } else {
+                content
+            }
+        }
     }
 
     // MARK: 已选游戏
 
     @ViewBuilder
     private func targetBody(_ app: LCAppModel) -> some View {
-        VStack(spacing: 20) {
-            HStack(spacing: 12) {
-                gameIcon(app)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(app.displayName)
-                        .font(.headline)
-                    Text("版本 \(app.version)")
-                        .font(.footnote)
-                        .foregroundColor(.gray)
+        // 外层 VStack 只管「被测内容 + 填充位」：内层是游戏行与阶段内容
+        // （原 spacing 20 与各元素逐字不变），背景量其真实高度供 detent
+        // 定高；Spacer(minLength: 0) 只为全高回退（iOS 15）把内容顶到
+        // 顶部，贴合呈现时收为 0、且不计入实测高（测的是内层）。
+        // 底边距 20 为新增：全高时由 Spacer 等量吸收、视觉不变；贴合时
+        // 它就是卡片的底部留白（预览的贴合高含此项）。
+        VStack(spacing: 0) {
+            VStack(spacing: 20) {
+                HStack(spacing: 12) {
+                    gameIcon(app)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(app.displayName)
+                            .font(.headline)
+                        Text("版本 \(app.version)")
+                            .font(.footnote)
+                            .foregroundColor(.gray)
+                    }
+                    Spacer()
+                    datapackStatusText(for: app)
                 }
-                Spacer()
-                datapackStatusText(for: app)
-            }
-            .padding(.horizontal)
+                .padding(.horizontal)
 
-            switch stage {
-            case .ready:
-                Text("数据包会写入这个游戏的数据容器（Documents/romfs.img），下次启动游戏时生效。")
-                    .font(.footnote)
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-                Button {
-                    pickingFile = true
-                } label: {
-                    Text("选择 romfs.img 文件")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-                .gcGlassProminentButtonStyle()
-                .tint(LCGameTheme.accentColor)
-                .padding(.horizontal)
-                Button {
-                    pickingFolder = true
-                } label: {
-                    Text("lc.datapack.chooseFolder".loc)
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-                .gcGlassButtonStyle()
-                .tint(LCGameTheme.accentColor)
-                .padding(.horizontal)
-                Text("lc.datapack.folderHint".loc)
-                    .font(.footnote)
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-                if request.app == nil {
-                    Button("换一款游戏") {
-                        target = nil
-                        pickedSource = nil
-                    }
-                    .foregroundColor(.gray)
-                }
-            case .copying:
-                VStack(spacing: 10) {
-                    ProgressView(value: progress)
-                    Text("正在拷贝 \(Self.sizeText(copiedBytes)) / \(Self.sizeText(totalBytes))")
+                switch stage {
+                case .ready:
+                    Text("数据包会写入这个游戏的数据容器（Documents/romfs.img），下次启动游戏时生效。")
                         .font(.footnote)
                         .foregroundColor(.gray)
-                    Button("取消拷贝") {
-                        cancelBox.cancelled = true
-                    }
-                    .foregroundColor(.red)
-                }
-                .padding(.horizontal)
-            case .done:
-                VStack(spacing: 12) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 44))
-                        .foregroundColor(.green)
-                    Text("数据包已导入（\(Self.sizeText(resultSize))）")
-                        .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
                     Button {
-                        presentationMode.wrappedValue.dismiss()
-                        onFinished()
+                        pickingFile = true
                     } label: {
-                        Text("完成")
+                        Text("选择 romfs.img 文件")
                             .font(.headline)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                     }
                     .gcGlassProminentButtonStyle()
                     .tint(LCGameTheme.accentColor)
-                }
-                .padding(.horizontal)
-            case .failed(let message):
-                VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 40))
-                        .foregroundColor(.orange)
-                    Text(message)
+                    .padding(.horizontal)
+                    Button {
+                        pickingFolder = true
+                    } label: {
+                        Text("lc.datapack.chooseFolder".loc)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                    }
+                    .gcGlassButtonStyle()
+                    .tint(LCGameTheme.accentColor)
+                    .padding(.horizontal)
+                    Text("lc.datapack.folderHint".loc)
                         .font(.footnote)
                         .foregroundColor(.gray)
-                        .multilineTextAlignment(.center)
-                    Button("重新选择文件") {
-                        stage = .ready
-                        pickingFile = true
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                    if request.app == nil {
+                        Button("换一款游戏") {
+                            target = nil
+                            pickedSource = nil
+                        }
+                        .foregroundColor(.gray)
                     }
+                case .copying:
+                    VStack(spacing: 10) {
+                        ProgressView(value: progress)
+                        Text("正在拷贝 \(Self.sizeText(copiedBytes)) / \(Self.sizeText(totalBytes))")
+                            .font(.footnote)
+                            .foregroundColor(.gray)
+                        Button("取消拷贝") {
+                            cancelBox.cancelled = true
+                        }
+                        .foregroundColor(.red)
+                    }
+                    .padding(.horizontal)
+                case .done:
+                    VStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 44))
+                            .foregroundColor(.green)
+                        Text("数据包已导入（\(Self.sizeText(resultSize))）")
+                            .font(.headline)
+                        Button {
+                            presentationMode.wrappedValue.dismiss()
+                            onFinished()
+                        } label: {
+                            Text("完成")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                        }
+                        .gcGlassProminentButtonStyle()
+                        .tint(LCGameTheme.accentColor)
+                    }
+                    .padding(.horizontal)
+                case .failed(let message):
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.orange)
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundColor(.gray)
+                            .multilineTextAlignment(.center)
+                        Button("重新选择文件") {
+                            stage = .ready
+                            pickingFile = true
+                        }
+                    }
+                    .padding(.horizontal)
                 }
-                .padding(.horizontal)
             }
-            Spacer()
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: LCDatapackBodyHeightKey.self, value: proxy.size.height)
+            })
+            Spacer(minLength: 0)
         }
         .padding(.top, 20)
+        .padding(.bottom, 20)
     }
 
     // MARK: 拷贝
