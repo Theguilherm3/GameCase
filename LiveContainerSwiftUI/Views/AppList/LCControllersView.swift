@@ -24,7 +24,11 @@ struct LCControllersView: View {
     /// 面板形态恒不垫（面板贴右全高、顶部即其物理顶）
     @Environment(\.lcInSidePanel) private var inSidePanel
     @State private var showTest = false
-    /// 电量变化慢且 GameController 不发通知：30 秒重读一次（与 NX 壳适配器同策略）
+    /// 电量订阅（LCBatteryObserver）：GCDeviceBattery 支持 KVO（苹果
+    /// WWDC20 10614 给的机制），batteryLevel 一变就 bump revision 重读；
+    /// 30 秒定时器保留作兜底（个别设备不发 KVO、充电等状态变化也不
+    /// 一定伴随 level 变化），并周期性重对齐订阅集合。
+    @StateObject private var batteryObserver = LCBatteryObserver()
     @State private var batteryTick = 0
 
     // NX 壳 ShellPalette 原值；自适应轮改动态色：深色变体与原值逐字
@@ -63,6 +67,7 @@ struct LCControllersView: View {
 
     private var rows: [RowInfo] {
         _ = batteryTick
+        _ = batteryObserver.revision
         return monitor.controllers.enumerated().map { index, controller in
             let battery = Self.battery(of: controller)
             return RowInfo(
@@ -75,13 +80,25 @@ struct LCControllersView: View {
         }
     }
 
-    /// 电量读法与 NX 壳适配器一致：状态 unknown 视为不报告电量，其余按比例取整
+    /// 电量读法：state 为 unknown 视为不报告电量；state 已报但 level
+    /// 仍为 0 同样视为未报告——苹果文档明示 batteryLevel 默认值就是
+    /// 0.0（框架尚未从设备拿到真实电量报告时的占位），旧读法只查
+    /// state、把这个占位 0 当真电量渲染成「0%」（还带低电量琥珀色），
+    /// Joy-Con 类手柄经 GameController 的 level 长期停在默认值上，
+    /// 于是恒显 0%。真实 0% 时手柄已断电断开、不会出现在列表里，
+    /// 这一档不会误伤真没电。其余按比例取整（钳到 0–100）。
+    /// charging 是 state 能确定的事实，level 未报告时也照实回传。
     private static func battery(of controller: GCController) -> (percent: Int?, charging: Bool) {
         if #available(iOS 17.0, *) {
             guard let battery = controller.battery, battery.batteryState != .unknown else {
                 return (nil, false)
             }
-            return (Int((battery.batteryLevel * 100).rounded()), battery.batteryState == .charging)
+            let charging = battery.batteryState == .charging
+            guard battery.batteryLevel > 0 else {
+                return (nil, charging)
+            }
+            let percent = Int((min(1, battery.batteryLevel) * 100).rounded())
+            return (percent, charging)
         }
         return (nil, false)
     }
@@ -111,6 +128,7 @@ struct LCControllersView: View {
         .foregroundStyle(.primary)
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             batteryTick += 1
+            batteryObserver.sync()
         }
     }
 
@@ -235,6 +253,12 @@ struct LCControllersView: View {
                         .font(.system(size: 10))
                         .accessibilityLabel("充电中")
                 }
+            } else if row.charging {
+                // 百分比没拿到就不编数字；但「在充电」是 state 能确定
+                // 的事实，照实显示（与有百分比时的闪电标同语义）
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 10))
+                Text("充电中")
             } else {
                 Text("无电量信息")
             }
@@ -242,7 +266,7 @@ struct LCControllersView: View {
         .lineLimit(1)
         .fixedSize()
         .font(.system(size: 12.5, weight: .semibold))
-        .foregroundStyle(row.batteryPercent == nil ? .primary.opacity(0.45) : tint)
+        .foregroundStyle(row.batteryPercent == nil && !row.charging ? .primary.opacity(0.45) : tint)
         .padding(.horizontal, 10)
         .frame(minHeight: 28)
         .background(.primary.opacity(0.06), in: Capsule())
@@ -297,6 +321,59 @@ struct LCControllersView: View {
                 .contentShape(RoundedRectangle(cornerRadius: 16))
             }
             .buttonStyle(.plain)
+        }
+    }
+}
+
+// MARK: - 手柄电量观察（KVO 订阅 GCDeviceBattery.batteryLevel）
+
+/// 订阅每个已连接手柄的 batteryLevel：苹果在 WWDC20 10614 明确给了
+/// KVO 这条路——level 一变就 bump revision 让手柄页重读，取代旧的
+/// 「只靠进页面快照 + 定时器重读」。手柄集合变化（连接/断开通知）
+/// 与页面定时器都会触发 sync() 重新对齐订阅：新到手柄补订、
+/// 断开的手柄退订、battery 对象晚到也能补上。只订阅 level；
+/// charging 等 state 变化由页面 30 秒定时器兜底重读。
+private final class LCBatteryObserver: ObservableObject {
+    @Published private(set) var revision = 0
+
+    private var observations: [ObjectIdentifier: NSKeyValueObservation] = [:]
+    private var centerObservers: [NSObjectProtocol] = []
+
+    init() {
+        let center = NotificationCenter.default
+        centerObservers.append(center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in
+            self?.sync()
+        })
+        centerObservers.append(center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in
+            self?.sync()
+        })
+        sync()
+    }
+
+    deinit {
+        centerObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        observations.values.forEach { $0.invalidate() }
+    }
+
+    /// 与当前已连接手柄的 battery 对象对齐订阅（幂等）
+    func sync() {
+        guard #available(iOS 17.0, *) else { return }
+        var live = Set<ObjectIdentifier>()
+        for controller in GCController.controllers() {
+            guard let battery = controller.battery else { continue }
+            let id = ObjectIdentifier(battery)
+            live.insert(id)
+            if observations[id] == nil {
+                observations[id] = battery.observe(\.batteryLevel, options: [.new]) { [weak self] _, _ in
+                    DispatchQueue.main.async {
+                        self?.revision += 1
+                    }
+                }
+            }
+        }
+        for id in Array(observations.keys) where !live.contains(id) {
+            observations[id]?.invalidate()
+            observations[id] = nil
         }
     }
 }
