@@ -229,6 +229,21 @@ enum LCGameTheme {
         color: heroBlendColor
     )
 
+    /// 横屏浅色专用底部融合 stops（Phase 34）：曲线口径同
+    /// heroFusionStops（单调三次密采样、两端切线归零），着色
+    /// 模型走竖屏融合的页底色 alpha 直 ramp（pageBackground
+    /// .opacity(f)）——横屏底部要收进的是已被洗浅的晕染面，
+    /// 不需要 hero 那条过黑的预乘 ramp。锚点把 f 在 0.80 处
+    /// 提前推到 1 并平台到 1：调用点把融合带下探出 backdrop
+    /// 帧底 40pt，f=1 的平台段正盖住下探区，屏内底边处已是
+    /// 纯页底色、洗色在屏上没有任何边界（见 landscapeBackdrop
+    /// 注释）。深色不用本 stops（横屏深色收尾逐字不变）。
+    static let landscapeLightMeltStops: [Gradient.Stop] = denseSampledStops(
+        anchors: [(0, 0), (0.36, 0.36), (0.53, 0.53), (0.69, 0.69), (0.80, 1), (1, 1)],
+        samples: 17,
+        zeroEndTangents: true
+    ) { pageBackground.opacity($0) }
+
     /// hero 过渡带噪点不透明度（Phase 32）：置 0 即关闭噪点层。
     static let heroDitherOpacity: Double = 0.015
     /// 静态噪点纹理（Phase 32）：256×256 灰阶随机（固定种子
@@ -766,9 +781,19 @@ struct LCGameHomeView: View {
         return LCGameLibraryInfo.gameState(for: app)
     }
 
-    /// 横屏信息区状态文案色：可玩 / 缺包沿用旧浅色值（比状态点色浅，
-    /// 是横屏信息区原有的排法），损坏用 brokenRed
+    /// 横屏信息区状态文案色：深色沿用旧浅色值（比状态点色浅，
+    /// 是横屏信息区原有的排法）；浅色改深色版（Phase 34）——
+    /// 旧浅色值压在浅色晕染上几乎无对比，改与竖屏同口径的
+    /// 深绿 / 深琥珀。损坏两模式共用 brokenRed（设置页浅色面
+    /// 同值在用）。
     private func stateTextColor(_ state: LCGameState) -> Color {
+        if colorScheme == .light {
+            switch state {
+            case .playable: return Color(red: 10 / 255, green: 125 / 255, blue: 55 / 255)
+            case .needsDatapack: return Color(red: 166 / 255, green: 96 / 255, blue: 0 / 255)
+            case .broken: return LCGameTheme.brokenRed
+            }
+        }
         switch state {
         case .playable: return Color(red: 196 / 255, green: 232 / 255, blue: 204 / 255)
         case .needsDatapack: return Color(red: 1.0, green: 196 / 255, blue: 110 / 255)
@@ -1691,12 +1716,16 @@ struct LCGameHomeView: View {
             VStack {
                 HStack(alignment: .center) {
                     HStack(spacing: 12) {
+                        // 计数行文字色（Phase 34）：深色沿用原固定
+                        // 浅色值；浅色改语义色（sectionText /
+                        // mutedText，与竖屏浅色同口径）——原固定
+                        // 值压在浅色晕染上几乎看不见（用户实测）。
                         Text("你的游戏")
                             .font(.system(size: 14))
-                            .foregroundColor(Color(red: 206 / 255, green: 200 / 255, blue: 194 / 255))
+                            .foregroundColor(colorScheme == .light ? LCGameTheme.sectionText : Color(red: 206 / 255, green: 200 / 255, blue: 194 / 255))
                         Text("第 \(focusIdx + 1) 个，共 \(list.count)")
                             .font(.system(size: 14))
-                            .foregroundColor(Color(red: 172 / 255, green: 164 / 255, blue: 158 / 255))
+                            .foregroundColor(colorScheme == .light ? LCGameTheme.mutedText : Color(red: 172 / 255, green: 164 / 255, blue: 158 / 255))
                     }
                     Spacer()
                     chromeRow(diameter: 41, includeSliders: true)
@@ -1712,6 +1741,9 @@ struct LCGameHomeView: View {
     /// 背景：聚焦游戏封面的色调晕染（NX CoverFlowBackdrop 常量）：原图
     /// 放大 1.3、模糊 60、饱和 1.25、不透明 0.75，切换时 0.45 交叉淡化；
     /// 上面再压径向（中心 0.5/0.4、80→900）与纵向两道渐变收边。
+    /// 浅色另在最上补一层底部融合（Phase 34，见 ZStack 内注
+    /// 释）：把帧底外出血的封面收进页底色、消底边硬带；深色
+    /// 不加、收尾逐字不变。
     private func landscapeBackdrop(size: CGSize) -> some View {
         ZStack {
             LCGameTheme.pageBackground
@@ -1737,6 +1769,27 @@ struct LCGameHomeView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
+            // 浅色专用底部融合（Phase 34，用户实测）：浅色下屏
+            // 幕最底边有一条未被洗色的封面原色直边带——封面层
+            // 放大 1.3、出血越过 backdrop 帧底，而洗色层（页底
+            // 色打底 + 两道渐变）都止于帧内、且纵向渐变底止只
+            // 到页底色 0.85 永不收满，出血的那截封面在底边露
+            // 出原色（深色下封面底本身近黑、看不见）。补一层
+            // 与竖屏融合同思路的底部收尾：带从屏高 50% 起、
+            // 下探出帧底 40pt，f 在带内 0.80 处已到 1 并平台
+            // （landscapeLightMeltStops），帧底处已是纯页底
+            // 色、屏上不存在洗色的边界，硬带消除。深色不加
+            // 本层、收尾逐字不变。
+            if colorScheme == .light {
+                LinearGradient(
+                    stops: LCGameTheme.landscapeLightMeltStops,
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(width: size.width, height: size.height * 0.5 + 40)
+                .offset(y: size.height * 0.25 + 20)
+                .allowsHitTesting(false)
+            }
         }
         .frame(width: size.width, height: size.height)
         .animation(reduceMotion ? .linear(duration: 0.2) : .easeInOut(duration: 0.45), value: focusKey)
@@ -1748,16 +1801,18 @@ struct LCGameHomeView: View {
     private func landscapeInfo(app: LCAppModel, metrics: LCLandscapeMetrics, width w: CGFloat) -> some View {
         let state = gameState(app)
         return ZStack(alignment: .top) {
-            // 浅色专用深罩（同竖屏 P1）：浅色下背景晕染收尾是浅色页
-            // 底、白色标题只剩阴影撑对比。标题簇之下垫一块模糊深色
-            // 斑（圆角矩形 + blur 30,边缘全柔、无硬界），深色不加。
-            if colorScheme == .light {
-                RoundedRectangle(cornerRadius: 60)
-                    .fill(Color.black.opacity(0.36))
-                    .frame(width: min(640, w - 16), height: metrics.short ? 130 : 168)
-                    .blur(radius: 30)
-                    .allowsHitTesting(false)
-            }
+            // 浅色对比方案（Phase 34 定版，用户实测后改判）：旧
+            // 法在此垫一块模糊深色斑（黑 0.36 + blur 30）给白
+            // 字撑对比——0.36 的黑模糊后只剩中灰，白字压上去
+            // 仍发飘，且斑本身在浅底上读作一团灰黑污渍（与卡
+            // 投影叠在中心卡下方）。改走语义色单选：标题 /
+            // 状态 / 计数在浅色下改深色语义值（见下与
+            // stateTextColor、landscape 计数行），斑整块移除、
+            // 不与语义色叠加。取舍理由：横屏信息区落在
+            // backdrop 纵向渐变的收尾段、底色已被洗向页底
+            // （与竖屏 hero 压原始封面不同），深色字在各封面
+            // 下均可读；深罩路线则要按封面明暗逐个调斑的强
+            // 度、且污渍感无解。深色模式本就无斑、逐字不变。
             // 隐藏占位先量好两行标题 + 34 状态行，切换时只有文字淡换
             VStack(spacing: 8) {
                 Text("M\nM")
@@ -1774,8 +1829,8 @@ struct LCGameHomeView: View {
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .multilineTextAlignment(.center)
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.35), radius: 10)
+                    .foregroundColor(colorScheme == .light ? LCGameTheme.sectionText : .white)
+                    .shadow(color: colorScheme == .light ? .clear : .black.opacity(0.35), radius: 10)
                 // 状态行三态呈现：文案/色随状态（可玩与缺包沿用旧
                 // 文案与浅色值，损坏新增红色「已损坏」）；非可玩时
                 // 可点开状态帮助页，与竖屏 hero 同一入口
@@ -1804,7 +1859,7 @@ struct LCGameHomeView: View {
     }
 
     /// 一张 16:9 卡（NX CoverView 常量）：圆角 = 卡宽 3%、白色 0.10 描边、
-    /// 阴影黑 0.5 / 半径卡宽 5% / y 卡宽 3%；左上状态点直径钳在
+    /// 阴影黑 0.5（浅色 0.16，Phase 34）/ 半径卡宽 5% / y 卡宽 3%；左上状态点直径钳在
     /// 8…14（卡宽 3.4%）、内距 = 点径 0.9。非聚焦卡缺数据包时左下加
     /// LC 自己的琥珀胶囊（LC 语义，NX 无此件）。
     /// transformScale：调用方此前靠外层 scaleEffect 呈现的缩放比（shelf
@@ -1842,7 +1897,11 @@ struct LCGameHomeView: View {
                     .padding(10 * transformScale)
                 }
             }
-            .shadow(color: .black.opacity(0.5), radius: cardW * 0.05, y: cardW * 0.03)
+            // 投影（Phase 34）：深色沿用黑 0.5；浅色降到 0.16
+            // ——为深底调的浓影压在浅色晕染上成一团灰黑（用户
+            // 实测，中心卡下方尤甚），半径 / 偏移是几何、两模
+            // 式共用不动。
+            .shadow(color: .black.opacity(colorScheme == .light ? 0.16 : 0.5), radius: cardW * 0.05, y: cardW * 0.03)
     }
 
     /// 1…3 张（NX shelf）：一字排开居中，聚焦卡原大、邻卡 0.8 缩放压暗
