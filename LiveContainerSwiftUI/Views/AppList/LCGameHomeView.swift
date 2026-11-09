@@ -2051,9 +2051,10 @@ struct LCGameHomeView: View {
     /// 只在下方 position 按当帧 stride 现算），每卡按 FlowTilt 变形：
     /// 缩放 1 - |near|×0.22（near = place 钳 ±1）、内收 near×卡宽 0.28、
     /// 压暗 |near|×0.25；远处再多退 far×卡宽 0.55、压暗至多 0.1；
-    /// zIndex = -|place|，近卡恒在上。构造 |place| ≤ 2.8 的卡（聚焦
-    /// ±2.8），更远的卡不建视图、不触发封面解析，长列表不预载全部
-    /// 封面。
+    /// zIndex = -|place|，近卡恒在上。构造范围：Phase 31–35 为
+    /// |place| ≤ 2.8（更远的卡不建视图、不预载封面），Phase 36 起
+    /// 取消构造门、全部卡恒在树中（单时钟刚性列车的前提，详见下
+    /// 方 Phase 36 注释）。
     /// 轮播感（Phase 28）：回转角改由连续 place 驱动、不随 near 在 ±1
     /// 饱和——angle = -clamp(place, ±1.5)×30°（±1 卡 30°、|place|≥1.5
     /// 45° 封顶，coverflow 常见 30°–45° 区间），透视 0.35 → 0.45。旧口径
@@ -2073,6 +2074,59 @@ struct LCGameHomeView: View {
     /// 中（allowsHitTesting），免得隐形卡拦下点向其身后内容的点按 /
     /// 长按；ZStack 底的 contentShape + 拖动手势不受单卡命中开关影
     /// 响，拖动全程可用。
+    ///
+    /// 边缘淡变的动画作用域（Phase 36）：Phase 31–35 里 place 与其
+    /// 全部派生量都在本函数 body 里按**终点**偏移算好，再以独立修
+    /// 饰符挂上卡——落点 withAnimation 事务下 body 不逐帧重算，
+    /// SwiftUI 是让每个可动画修饰符各自在自己的参数空间里、按同
+    /// 一条事务曲线在旧值与新值之间独立插值。位置 / 缩放 / 压暗 /
+    /// opacity 是 place 的四种不同非线性函数（位置带 near 钳制与
+    /// far 远退、缩放与压暗在 |near| = 1 饱和、opacity 在 |place|
+    /// 2.0 处折点），独立插值下同一帧各参数反推的 place 互不相
+    /// 等：如一张卡 place 2.4 → 0，进度 0.5 时位置反推 place ≈
+    /// 1.2（按淡变函数本应实心 1），opacity 却只插到 0.5 + 0.5×
+    /// 0.5 = 0.75——近中心处仍半透明、透出后面的卡（用户录屏
+    /// f009：黑魂字样透过正面的丝之歌卡）；邻卡则位置已到、压暗
+    /// 与 opacity 还在半途，整体发虚发白（f020）。目标卡「先显
+    /// 示」同理：标题 / 焦点在过中点时已切（Phase 27 语义），缩
+    /// 放与压暗又在 place 意义上先饱和到位，唯独 opacity 的端点
+    /// 横跨淡变带、插值最晚收敛——卡看着大而正、却半透明。弹簧
+    /// 时代（Phase 30）同病轻得多：总时长只约 0.38–0.45s，且指
+    /// 数剖面把绝大部分行程压在起步约 0.1s 内走完，长尾爬行的
+    /// ≲0.3 卡区间里各卡 |place| 已 ≤ 2、opacity 两端恒 1，半
+    /// 透明只剩起步一闪；Phase 35 把多卡时长拉到最长 0.85s 且
+    /// 中段近匀速，每张卡以稳定速度横穿整个淡变带与参数失配
+    /// 区，失同步窗口近乎翻倍——用户实测「重影比上个版本更严
+    /// 重」与此逐项吻合。短甩不受影响：拖动跟随的偏移写不带动
+    /// 画事务、body 按当帧偏移同步求值；一卡段落点两端 |place|
+    /// ≤ 2、opacity 恒 1 → 1，无从失同步（录屏 f037–042 的 2 卡
+    /// 慢甩全程实心，慢在其行程主要走拖动段、落点动画只剩短
+    /// 尾）。
+    ///
+    /// 第二个结构病在构造窗口：|place| ≤ 2.8 的门在落点事务开始
+    /// 的那一遍 body 里按**终点**偏移求值——长甩时目标卡在拖动
+    /// 段还在窗外（place 4–5），松手那一遍才插入视图树；新插入
+    /// 的卡没有可插值的旧呈现值，只能直接落在终点（或自带一轮
+    /// 插入动画），而窗内的卡还在途中：这就是「目标卡先固定、
+    /// 后面的才滚过去」的字面机制，与属性失同步叠加成重影。窗
+    /// 外的卡同理在松手帧凭空消失、不滚出。
+    ///
+    /// 修法（验收口径：快速与慢速同构——整列是单时钟刚性列车，
+    /// 慢拖跟随段是基准形态，落点段与之同构）：
+    /// ①取消构造门：全部卡恒在树中（库规模个位数，Phase 31 扩
+    /// 窗到 2.8 时已论证多渲染 1–2 张成本可忽略；「全程在树」自
+    /// 此是刚性的正确性前提而非性能取舍），飞行全程无插入 / 移
+    /// 除，入场淡变只剩 opacity 这一条 place 纯函数；
+    /// ②全部 place 派生变换收进 LCDeckCardTransform（Animatable
+    /// 修饰符，animatableData = **偏移本人**——全列共享的同一
+    /// 个标量，序号只是固定入参）：事务动画只插值这一个量，修
+    /// 饰符 body 逐帧以插值后的偏移现算 place 与位置 / 角度 /
+    /// 缩放 / 压暗 / zIndex / opacity / 命中——任何卡没有自己的
+    /// 时钟，任意帧所有属性都是同一偏移的纯函数，opacity ≡ 淡
+    /// 变函数（当帧 place）严格成立、|place| ≤ 2 逐帧恒实心。
+    /// 各公式与修饰符相对次序逐字未动；落点曲线（Phase 35，
+    /// 它决定列车的速度剖面）/ 正面门 / 卡位偏移 / 跟随投影橡
+    /// 皮筋全保留——曲线之外再无任何属性另行插值。
     private func landscapeCarousel(list: [LCAppModel], metrics: LCLandscapeMetrics, size: CGSize) -> some View {
         let w = size.width
         let cover = metrics.cover
@@ -2081,43 +2135,30 @@ struct LCGameHomeView: View {
         let focusIdx = landscapeFocusIndex(in: list)
         return ZStack {
             ForEach(list.indices, id: \.self) { idx in
-                let place = CGFloat(idx) - carouselOffsetCards
-                if abs(place) <= 2.8 {
-                    let app = list[idx]
-                    let near = max(-1, min(1, place))
-                    let tilt = max(-1.5, min(1.5, place))
-                    let far = place > 1 ? place - 1 : place < -1 ? place + 1 : 0
-                    let edgeOpacity = min(1, max(0, (2.8 - Double(abs(place))) / 0.8))
-                    landscapeCard(app: app, cardW: cover, isFocused: idx == focusIdx)
-                        // Phase 15 审计：命中走 position 布局落位（见
-                        // landscapeShelf 注释），无 shelf 的误启动病；
-                        // 菜单原挂在旋转 / 缩放之后的视图上、与 shelf
-                        // 的预览病同源，改挂到未变换的卡本体上——
-                        // 系统快照源即卡本身，变换全部留在菜单之外。
-                        .contextMenu {
-                            gameContextMenu(for: app)
-                        }
-                        .rotation3DEffect(
-                            .degrees(reduceMotion ? 0 : -tilt * 30),
-                            axis: (x: 0, y: 1, z: 0),
-                            perspective: 0.45
-                        )
-                        .scaleEffect(1 - abs(near) * 0.22)
-                        .brightness(-abs(near) * 0.25 - min(abs(far), 1) * 0.1)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            carouselTap(app: app, index: idx, list: list)
-                        }
-                        .position(
-                            x: w / 2 + place * stride - near * cover * 0.28 - far * cover * 0.55,
-                            y: areaH / 2
-                        )
-                        .zIndex(-Double(abs(place)))
-                        // Phase 31 边缘淡变：只挂 opacity（与命中），
-                        // 不动位置 / 缩放 / 角度 / 压暗，见函数头注释。
-                        .opacity(edgeOpacity)
-                        .allowsHitTesting(edgeOpacity > 0.05)
-                }
+                let app = list[idx]
+                // Phase 36：不再按 |place| ≤ 2.8 门控构造（理由见函
+                // 数头 Phase 36 注释）——全部卡恒在树中，place 的全
+                // 部派生变换收进 LCDeckCardTransform（animatableData
+                // = 全列共享的偏移本人），单时钟刚性列车。
+                landscapeCard(app: app, cardW: cover, isFocused: idx == focusIdx)
+                    // Phase 15 审计：命中走 position 布局落位（见
+                    // landscapeShelf 注释），无 shelf 的误启动病；
+                    // 菜单原挂在旋转 / 缩放之后的视图上、与 shelf
+                    // 的预览病同源，改挂到未变换的卡本体上——
+                    // 系统快照源即卡本身，变换全部留在菜单之外。
+                    .contextMenu {
+                        gameContextMenu(for: app)
+                    }
+                    .modifier(LCDeckCardTransform(
+                        index: idx,
+                        offset: carouselOffsetCards,
+                        width: w,
+                        stride: stride,
+                        cover: cover,
+                        areaH: areaH,
+                        reduceMotion: reduceMotion,
+                        onTap: { carouselTap(app: app, index: idx, list: list) }
+                    ))
             }
         }
         .frame(width: w, height: areaH)
@@ -2393,6 +2434,64 @@ struct LCGameHomeView: View {
                 carouselSettled = true
             }
         }
+    }
+}
+
+/// 横屏牌组单卡的全部 place 派生变换（Phase 36）：单时钟刚性列车
+/// 的执行件。animatableData 是**偏移本人**（carouselOffsetCards，
+/// 全列共享的同一个标量），序号只是固定入参——落点 / 同步事务动
+/// 画只插值这一个量，SwiftUI 逐帧以插值后的偏移回调 body，place
+/// 与位置 / 角度 / 缩放 / 压暗 / zIndex / opacity / 命中全部由当
+/// 帧偏移现算：任何卡没有自己的动画时钟，opacity 严格等于当帧
+/// place 的淡变函数（|place| ≤ 2 恒 1、2.0–2.8 线性淡出），与位
+/// 置同帧、不被任何曲线另行插值。拖动跟随段的偏移写不带事务动
+/// 画，animatableData 逐写跳变，与旧 body 同步求值逐点同构。
+/// 公式与修饰符相对次序与 Phase 31–35 的内联链逐字一致（旋转 →
+/// 缩放 → 压暗 → contentShape → 点按 → position → zIndex →
+/// opacity → 命中开关）；contextMenu 仍挂在修饰符之外的未变换卡
+/// 本体上（Phase 15 口径）。机制复盘见 landscapeCarousel 头注释。
+private struct LCDeckCardTransform: ViewModifier, Animatable {
+    let index: Int
+    var offset: CGFloat
+    let width: CGFloat
+    let stride: CGFloat
+    let cover: CGFloat
+    let areaH: CGFloat
+    let reduceMotion: Bool
+    let onTap: () -> Void
+
+    var animatableData: CGFloat {
+        get { offset }
+        set { offset = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let place = CGFloat(index) - offset
+        let near = max(-1, min(1, place))
+        let tilt = max(-1.5, min(1.5, place))
+        let far = place > 1 ? place - 1 : place < -1 ? place + 1 : 0
+        let edgeOpacity = min(1, max(0, (2.8 - Double(abs(place))) / 0.8))
+        return content
+            .rotation3DEffect(
+                .degrees(reduceMotion ? 0 : -tilt * 30),
+                axis: (x: 0, y: 1, z: 0),
+                perspective: 0.45
+            )
+            .scaleEffect(1 - abs(near) * 0.22)
+            .brightness(-abs(near) * 0.25 - min(abs(far), 1) * 0.1)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onTap()
+            }
+            .position(
+                x: width / 2 + place * stride - near * cover * 0.28 - far * cover * 0.55,
+                y: areaH / 2
+            )
+            .zIndex(-Double(abs(place)))
+            // 边缘淡变：只挂 opacity（与命中），公式与 Phase 31 逐
+            // 字一致；同步性来自本修饰符的单时钟构造，见头注释。
+            .opacity(edgeOpacity)
+            .allowsHitTesting(edgeOpacity > 0.05)
     }
 }
 
