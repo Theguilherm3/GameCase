@@ -35,32 +35,184 @@ enum LCGameTheme {
             : UIColor(red: 1, green: 1, blue: 1, alpha: 1)
     })
 
-    // NX 预览取值
-    static let pageBackground = Color(UIColor { trait in
+    // NX 预览取值。UIColor 本体单独存一份，供 hero 融合渐变按混合
+    // 因子逐 trait 构造采样色（heroBlendColor）；pageBackground 的
+    // 取值与此前逐字一致。
+    static let pageBackgroundUIColor = UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1)
             : UIColor(red: 242 / 255, green: 242 / 255, blue: 247 / 255, alpha: 1)
-    })
-    /// 浅色封面头深罩的共享 stops（P1 的主页版形状）：主页 hero 与
-    /// 每游戏设置页头共用同一套——峰值 0.47 在标题带、其前 0.42 的
-    /// 宽平台罩住整个标题块，尾部两段缓降（0.24 → 0.06 → 0）不留
-    /// 硬界。两处只差几何（罩总高 / 帧下下探量），形状禁止各处另
-    /// 写：#63 时设置页自带一套陡尾 stops（0.40@0.86 → 0@1），罩在
-    /// 帧下缘处仍剩约 0.27 的黑、只用 22pt 就收零，浅底上成一条看
-    /// 得出的灰带（用户实测）。尾段较 #63 主页初版再放缓一档
-    /// （0.26@0.82 / 0.08@0.93 → 0.24@0.81 / 0.06@0.92），末端更
-    /// 早趋零；峰值与标题带数值逐字不动。Phase 30 几何通则：两
-    /// 处的 loc 1（alpha 0）都必须正落在各自封面图的绘制下缘、
-    /// 罩不探出图外——几何取值见两处调用点注释。
-    static let coverScrimStops: [Gradient.Stop] = [
-        .init(color: .black.opacity(0), location: 0),
-        .init(color: .black.opacity(0.22), location: 0.30),
-        .init(color: .black.opacity(0.42), location: 0.52),
-        .init(color: .black.opacity(0.47), location: 0.68),
-        .init(color: .black.opacity(0.24), location: 0.81),
-        .init(color: .black.opacity(0.06), location: 0.92),
-        .init(color: .black.opacity(0), location: 1),
+    }
+    static let pageBackground = Color(pageBackgroundUIColor)
+    /// 浅色封面头深罩的锚点（P1 的主页版形状）：峰值 0.47 在标题
+    /// 带、其前 0.42 的宽平台罩住整个标题块，尾部两段缓降
+    /// （0.24 → 0.06 → 0）不留硬界。尾段较 #63 主页初版再放缓一
+    /// 档（0.26@0.82 / 0.08@0.93 → 0.24@0.81 / 0.06@0.92），末
+    /// 端更早趋零；峰值与标题带数值逐字不动。
+    /// 本表是两处的锚点源：设置页头直接以锚点为 stops 使用
+    /// （coverScrimStops，Phase 30 与图同终点形态，本轮不动）；
+    /// 主页 hero 自 Phase 32 起改走 heroScrimStops（同锚点的单
+    /// 调三次密采样，见下）。形状禁止各处另写：#63 时设置页自
+    /// 带一套陡尾 stops（0.40@0.86 → 0@1），罩在帧下缘处仍剩
+    /// 约 0.27 的黑、只用 22pt 就收零，浅底上成一条看得出的灰
+    /// 带（用户实测）。几何（罩总高 / 下探量）见两处调用点注释：
+    /// 设置页的 loc 1 必须正落在封面图的绘制下缘（Phase 30 通
+    /// 则）；主页 hero 的几何是 #69 形态（下探 12，Phase 31 定）。
+    static let coverScrimAnchors: [(location: Double, alpha: Double)] = [
+        (0, 0), (0.30, 0.22), (0.52, 0.42), (0.68, 0.47),
+        (0.81, 0.24), (0.92, 0.06), (1, 0),
     ]
+    static let coverScrimStops: [Gradient.Stop] = coverScrimAnchors.map {
+        .init(color: .black.opacity($0.alpha), location: $0.location)
+    }
+
+    /// 单调三次（Fritsch–Carlson）密采样：过全部锚点、每段单调、
+    /// C1 连续（斜率无跳变）。相邻割线异号的锚点是局部极值、切线
+    /// 归零，否则三次曲线会在极值前冲过锚点值；切线比 a²+b²>9 时
+    /// 等比收缩保单调。渐变构造专用：把少数锚点的分段线性曲线换
+    /// 成同一条平滑曲线的密采样，消掉每个 stop 处的斜率拐点——
+    /// 验收口径「过渡是平滑的色值和透明度的转变」：色值与 alpha
+    /// 两通道都必须是单条连续平滑函数，不许分段拐点与平台段。
+    private static func monotoneCubicSamples(
+        anchors: [(x: Double, y: Double)],
+        samples: Int,
+        zeroEndTangents: Bool
+    ) -> [(x: Double, y: Double)] {
+        let n = anchors.count
+        var secants = [Double](repeating: 0, count: n - 1)
+        for i in 0..<(n - 1) {
+            secants[i] = (anchors[i + 1].y - anchors[i].y) / (anchors[i + 1].x - anchors[i].x)
+        }
+        var tangents = [Double](repeating: 0, count: n)
+        tangents[0] = secants[0]
+        tangents[n - 1] = secants[n - 2]
+        for i in 1..<(n - 1) {
+            if secants[i - 1] * secants[i] <= 0 {
+                tangents[i] = 0
+            } else {
+                tangents[i] = (secants[i - 1] + secants[i]) / 2
+            }
+        }
+        if zeroEndTangents {
+            tangents[0] = 0
+            tangents[n - 1] = 0
+        }
+        for i in 0..<(n - 1) {
+            if secants[i] == 0 {
+                tangents[i] = 0
+                tangents[i + 1] = 0
+            } else {
+                let a = tangents[i] / secants[i]
+                let b = tangents[i + 1] / secants[i]
+                let s = a * a + b * b
+                if s > 9 {
+                    let tau = 3 / s.squareRoot()
+                    tangents[i] = tau * a * secants[i]
+                    tangents[i + 1] = tau * b * secants[i]
+                }
+            }
+        }
+        return (0..<samples).map { j in
+            let x = Double(j) / Double(samples - 1)
+            var i = 0
+            while i < n - 2, x > anchors[i + 1].x { i += 1 }
+            let dx = anchors[i + 1].x - anchors[i].x
+            let s = (x - anchors[i].x) / dx
+            let s2 = s * s
+            let s3 = s2 * s
+            let h00 = 2 * s3 - 3 * s2 + 1
+            let h10 = s3 - 2 * s2 + s
+            let h01 = -2 * s3 + 3 * s2
+            let h11 = s3 - s2
+            let y = h00 * anchors[i].y + h10 * dx * tangents[i]
+                + h01 * anchors[i + 1].y + h11 * dx * tangents[i + 1]
+            return (x: x, y: y)
+        }
+    }
+
+    /// 主页 hero 专用深罩 stops（Phase 32）：与 coverScrimStops
+    /// 同一组锚点、同一强度口径，但不用锚点原样作 stops——锚点
+    /// 间的分段线性每段都是斜率拐点，压在深色低频图面（无横图
+    /// 兜底的放大模糊图标面）上，拐点连成一级级横向台阶（用户
+    /// 实测「过渡有阶梯感」），再叠 8-bit 量化更显。这里按单调
+    /// 三次密采样 17 点作 stops：过全部锚点、峰值 0.47 处切线归
+    /// 零成平滑平台、采样后 alpha 严格落在 [0, 0.47] 无过冲；
+    /// 三处文本高度的 alpha 与旧分段值同级（h≈363 换算：状态行
+    /// 0.435→0.446、标题 0.414→0.446、版本行 0.168→0.162，合
+    /// 成亮度差 −0.005 / −0.021 / +0.005，深色参考图口径）。
+    static let heroScrimStops: [Gradient.Stop] = monotoneCubicSamples(
+        anchors: coverScrimAnchors.map { (x: $0.location, y: $0.alpha) },
+        samples: 17,
+        zeroEndTangents: false
+    ).map { Gradient.Stop(color: .black.opacity($0.y), location: $0.x) }
+
+    /// hero 融合渐变的采样色：透明黑 → 页底色、混合因子 f。与原
+    /// 两段线性渐变的分量模型逐字一致（RGB = 页底 RGB × f、
+    /// alpha = f），只是混合因子从位置线性换成 heroFusionStops
+    /// 的平滑曲线值。
+    private static func heroBlendColor(_ f: Double) -> Color {
+        Color(UIColor { trait in
+            let bg = pageBackgroundUIColor.resolvedColor(with: trait)
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            _ = bg.getRed(&r, green: &g, blue: &b, alpha: &a)
+            let k = CGFloat(f)
+            return UIColor(red: r * k, green: g * k, blue: b * k, alpha: k)
+        })
+    }
+
+    /// 主页 hero 融合渐变 stops（Phase 32）：原构造是透明黑 →
+    /// 页底色的两段线性渐变，长缓坡在 8-bit 下量化成带，且斜率
+    /// 在融合带上界（与原图衔接处）与下界（与页底衔接处）突变、
+    /// 各留一条折线。改按单调三次密采样 13 点：锚点取三处文本
+    /// 行在融合带内的现行 blend 值——hero 高 h≈363（0.39 ×
+    /// 932pt 屏高）时融合带 0.48h ≈ 174pt，状态行 / 标题 / 版
+    /// 本行中心距 hero 底约 95 / 60 / 24pt，u = 1 − d ÷ 174 ≈
+    /// 0.453 / 0.657 / 0.861，锚点落在对角线上即 blend 在该三
+    /// 处与旧线性逐点相等；两端切线归零，融合带上下界的斜率连
+    /// 续。偏离只在 u<0.453 的图像主导段（最大约 −0.067，坡度
+    /// 渐入）与 u>0.861 的收尾段（约 +0.013）。深色模式共用此
+    /// 层：本轮对深色只换 stops 曲线，端点 / 中点 / 形态不动。
+    static let heroFusionStops: [Gradient.Stop] = monotoneCubicSamples(
+        anchors: [(0, 0), (0.453, 0.453), (0.657, 0.657), (0.861, 0.861), (1, 1)],
+        samples: 13,
+        zeroEndTangents: true
+    ).map { Gradient.Stop(color: heroBlendColor($0.y), location: $0.x) }
+
+    /// hero 过渡带噪点不透明度（Phase 32）：置 0 即关闭噪点层。
+    static let heroDitherOpacity: Double = 0.015
+    /// 静态噪点纹理（Phase 32）：256×256 灰阶随机（固定种子
+    /// LCG，跨启动一致、无动画），拉伸铺满 hero 过渡带、以
+    /// heroDitherOpacity 盖在融合 + 深罩之上、浮钮与文字之下。
+    /// 密采样消掉斜率拐点后，深色平坦面上仍可能残余 8-bit 量
+    /// 化色带；约 ±2 LSB 的静态扰动把带打散到不可见。噪点不参
+    /// 与渐变构造，两通道的平滑性仍由曲线本身保证。
+    static let heroNoiseImage: UIImage = {
+        let side = 256
+        var state: UInt32 = 0x9E37_79B9
+        var data = Data(count: side * side * 4)
+        data.withUnsafeMutableBytes { raw in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            for p in 0..<(side * side) {
+                state = state &* 1_664_525 &+ 1_013_904_223
+                let v = UInt8(truncatingIfNeeded: state >> 24)
+                bytes[p * 4] = v
+                bytes[p * 4 + 1] = v
+                bytes[p * 4 + 2] = v
+                bytes[p * 4 + 3] = 255
+            }
+        }
+        let provider = CGDataProvider(data: data as CFData)!
+        let cgImage = CGImage(
+            width: side, height: side,
+            bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: side * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false,
+            intent: .defaultIntent
+        )!
+        return UIImage(cgImage: cgImage)
+    }()
     /// 主操作奶油色（开始按钮 / 聚焦选中线）：动态色——深色值与原硬
     /// 编码逐字一致；浅色略加深饱和，白底上作填充 / 玻璃 tint 不发飘
     static let nxCream = Color(UIColor { trait in
@@ -1077,22 +1229,25 @@ struct LCGameHomeView: View {
                 .frame(height: height * 0.12)
                 Spacer()
             }
+            // 融合渐变（图 → 页底）：stops 走 LCGameTheme
+            // .heroFusionStops 的平滑曲线（Phase 32：色值与 alpha
+            // 两通道同为单条连续平滑函数），几何（带高 0.48h、底
+            // 锚定）与端点逐字不变；深浅两模式共用此层，深色模式
+            // 本轮只换 stops 曲线、不动形态与强度。
             VStack {
                 Spacer()
                 LinearGradient(
-                    gradient: Gradient(stops: [
-                        .init(color: Color.black.opacity(0), location: 0),
-                        .init(color: LCGameTheme.pageBackground, location: 1)
-                    ]),
+                    gradient: Gradient(stops: LCGameTheme.heroFusionStops),
                     startPoint: .top, endPoint: .bottom
                 )
                 .frame(height: height * 0.48)
             }
             // 浅色专用深罩（用户看预览拍板 P1）：浅色下融合渐变把封面
             // 下部洗成近白页底、白色大标题糊在亮底上。标题文字层之下
-            // 加一层深色渐变罩：stops 用 LCGameTheme.coverScrimStops
-            // 共享形状（峰值 0.47 对准标题带、状态行处 0.42，向下经
-            // 版本行渐弱、在 hero 下缘外 12pt 处收零，不留硬界）；
+            // 加一层深色渐变罩：stops 与 LCGameTheme.coverScrimStops
+            // 同锚点（峰值 0.47 对准标题带、状态行处 0.42，向下经
+            // 版本行渐弱、在 hero 下缘外 12pt 处收零，不留硬界），
+            // Phase 32 起改走密采样版 heroScrimStops（见下注）；
             // 深色模式不加、逐字保持现状（原渐变已是深色融合）。
             // 几何 = #69 形态：罩高 0.62h+24、下探 12。Phase 30 曾把
             // 本罩改成与图同终点（高 0.58h、下探 0）想消图缘折角，
@@ -1101,16 +1256,36 @@ struct LCGameHomeView: View {
             // 本处几何至 #69 值（罩与上方融合渐变回 #69 的共存形
             // 态）；Phase 30 的同终点对齐只保留在设置页页头（罩高
             // 532 / 下探 160 与图最后一行齐平，本轮不动）。
+            // Phase 32：本罩 stops 改走 heroScrimStops（同锚点单调
+            // 三次密采样）+ 其下噪点层，治深色兜底图面上的阶梯感；
+            // 本处几何（0.62h+24 / 下探 12）逐字不动，丝之歌等明亮
+            // 图面认可的 #69 形态不改陡、不改短。
             if colorScheme == .light {
                 VStack {
                     Spacer()
                     LinearGradient(
-                        gradient: Gradient(stops: LCGameTheme.coverScrimStops),
+                        gradient: Gradient(stops: LCGameTheme.heroScrimStops),
                         startPoint: .top, endPoint: .bottom
                     )
                     .frame(height: height * 0.62 + 24)
                     .offset(y: 12)
                 }
+                .allowsHitTesting(false)
+            }
+            // 静态噪点（Phase 32）：盖在融合 + 深罩之上、浮钮与文
+            // 字之下，几何与深罩同带（0.62h+24、下探 12，完整覆
+            // 盖融合带），打散密采样后残余的 8-bit 量化色带；只
+            // 在浅色加——深色模式本轮只平滑融合 stops、不加层。
+            // 开关与纹理见 LCGameTheme.heroDitherOpacity。
+            if colorScheme == .light, LCGameTheme.heroDitherOpacity > 0 {
+                VStack {
+                    Spacer()
+                    Image(uiImage: LCGameTheme.heroNoiseImage)
+                        .resizable()
+                        .frame(height: height * 0.62 + 24)
+                        .offset(y: 12)
+                }
+                .opacity(LCGameTheme.heroDitherOpacity)
                 .allowsHitTesting(false)
             }
             // 右上浮钮排
