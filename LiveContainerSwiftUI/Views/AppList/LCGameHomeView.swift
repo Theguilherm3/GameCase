@@ -49,10 +49,11 @@ enum LCGameTheme {
     /// （0.24 → 0.06 → 0）不留硬界。尾段较 #63 主页初版再放缓一
     /// 档（0.26@0.82 / 0.08@0.93 → 0.24@0.81 / 0.06@0.92），末
     /// 端更早趋零；峰值与标题带数值逐字不动。
-    /// 本表是两处的锚点源：设置页头直接以锚点为 stops 使用
-    /// （coverScrimStops，Phase 30 与图同终点形态，本轮不动）；
-    /// 主页 hero 自 Phase 32 起改走 heroScrimStops（同锚点的单
-    /// 调三次密采样，见下）。形状禁止各处另写：#63 时设置页自
+    /// 本表是两处深罩的共同锚点源：主页 hero（heroScrimStops）
+    /// 与设置页头（settingsScrimStops）分别自 Phase 32 / 33 起
+    /// 按单调三次密采样使用（见下），锚点原样作 stops 的分段
+    /// 形态已退役——分段拐点压在低频图面上成台阶（用户实测）。
+    /// 形状禁止各处另写：#63 时设置页自
     /// 带一套陡尾 stops（0.40@0.86 → 0@1），罩在帧下缘处仍剩
     /// 约 0.27 的黑、只用 22pt 就收零，浅底上成一条看得出的灰
     /// 带（用户实测）。几何（罩总高 / 下探量）见两处调用点注释：
@@ -62,10 +63,6 @@ enum LCGameTheme {
         (0, 0), (0.30, 0.22), (0.52, 0.42), (0.68, 0.47),
         (0.81, 0.24), (0.92, 0.06), (1, 0),
     ]
-    static let coverScrimStops: [Gradient.Stop] = coverScrimAnchors.map {
-        .init(color: .black.opacity($0.alpha), location: $0.location)
-    }
-
     /// 单调三次（Fritsch–Carlson）密采样：过全部锚点、每段单调、
     /// C1 连续（斜率无跳变）。相邻割线异号的锚点是局部极值、切线
     /// 归零，否则三次曲线会在极值前冲过锚点值；切线比 a²+b²>9 时
@@ -130,21 +127,74 @@ enum LCGameTheme {
         }
     }
 
-    /// 主页 hero 专用深罩 stops（Phase 32）：与 coverScrimStops
-    /// 同一组锚点、同一强度口径，但不用锚点原样作 stops——锚点
-    /// 间的分段线性每段都是斜率拐点，压在深色低频图面（无横图
-    /// 兜底的放大模糊图标面）上，拐点连成一级级横向台阶（用户
-    /// 实测「过渡有阶梯感」），再叠 8-bit 量化更显。这里按单调
-    /// 三次密采样 17 点作 stops：过全部锚点、峰值 0.47 处切线归
-    /// 零成平滑平台、采样后 alpha 严格落在 [0, 0.47] 无过冲；
-    /// 三处文本高度的 alpha 与旧分段值同级（h≈363 换算：状态行
+    /// 密采样 stops 的共用入口（Phase 33）：锚点 → 单调三次密
+    /// 采样 → 按 color 闭包逐点着色成 stops。主页 heroScrimStops
+    /// / heroFusionStops 与设置页 settingsScrimStops /
+    /// settingsBackdropMaskStops 同调本入口，采样逻辑全仓一份，
+    /// 不许各处复制近似实现。
+    private static func denseSampledStops(
+        anchors: [(x: Double, y: Double)],
+        samples: Int,
+        zeroEndTangents: Bool,
+        color: (Double) -> Color
+    ) -> [Gradient.Stop] {
+        monotoneCubicSamples(
+            anchors: anchors, samples: samples, zeroEndTangents: zeroEndTangents
+        ).map { Gradient.Stop(color: color($0.y), location: $0.x) }
+    }
+
+    /// 主页 hero 专用深罩 stops（Phase 32）：与设置页
+    /// settingsScrimStops 同一组锚点、同一强度口径、同一采样，
+    /// 但不用锚点原样作 stops——锚点间的分段线性每段都是斜率
+    /// 拐点，压在深色低频图面（无横图兜底的放大模糊图标面）
+    /// 上，拐点连成一级级横向台阶（用户实测「过渡有阶梯
+    /// 感」），再叠 8-bit 量化更显。这里按单调三次密采样 17
+    /// 点作 stops：过全部锚点、峰值 0.47 处切线归零成平滑平
+    /// 台、采样后 alpha 严格落在 [0, 0.47] 无过冲；三处文本
+    /// 高度的 alpha 与旧分段值同级（h≈363 换算：状态行
     /// 0.435→0.446、标题 0.414→0.446、版本行 0.168→0.162，合
     /// 成亮度差 −0.005 / −0.021 / +0.005，深色参考图口径）。
-    static let heroScrimStops: [Gradient.Stop] = monotoneCubicSamples(
+    static let heroScrimStops: [Gradient.Stop] = denseSampledStops(
         anchors: coverScrimAnchors.map { (x: $0.location, y: $0.alpha) },
         samples: 17,
         zeroEndTangents: false
-    ).map { Gradient.Stop(color: .black.opacity($0.y), location: $0.x) }
+    ) { .black.opacity($0) }
+
+    /// 设置页页头深罩 stops（Phase 33）：与 heroScrimStops 同锚
+    /// 点、同采样（17 点单调三次、同一 denseSampledStops 入
+    /// 口），两页曲线逐点相等。此前设置页以 7 锚点原样作分段
+    /// stops，分段拐点在灰面上成台阶（用户在 S2Arm 兜底图页
+    /// 头实测后令「设置页同步处理」）。等效强度按设置页几何
+    /// 换算（罩高 532、底锚定）：标题块 loc 0.53–0.65 处
+    /// 0.423–0.461 → 0.426–0.468、副行 loc 约 0.68 锚点 0.47
+    /// 逐点不变——只平滑、不变弱；罩几何（532 / 下探 160、与
+    /// 图同终点）逐字不动（Phase 30 定版）。
+    static let settingsScrimStops: [Gradient.Stop] = denseSampledStops(
+        anchors: coverScrimAnchors.map { (x: $0.location, y: $0.alpha) },
+        samples: 17,
+        zeroEndTangents: false
+    ) { .black.opacity($0) }
+
+    /// 设置页页头 backdrop 淡出 mask 的锚点（NX 原规格）：loc
+    /// 0.45 前满显，其后衰减、loc 1 归零——loc 1 正落在图绘制
+    /// 的最后一行像素上（绘制总高 = 帧高 + topInset + 160，
+    /// Phase 28 / 30），终点位置是同终点结论的一部分、不许移。
+    static let settingsBackdropMaskAnchors: [(location: Double, alpha: Double)] = [
+        (0, 1), (0.45, 1), (0.68, 0.55), (0.85, 0.18), (1, 0),
+    ]
+
+    /// 设置页页头 backdrop 淡出 mask stops（Phase 33）：锚点同
+    /// 上，改走单调三次密采样 17 点、两端切线归零——离开满显
+    /// 平台与落到 clear 都无斜率突变。锚点逐点过：0 / 0.45 →
+    /// 1、0.68 → 0.55、0.85 → 0.18、1 → 0（终点逐字不变）；
+    /// 段内中点等效值 loc 0.565 处 0.775 → 0.834（离平台缓
+    /// 出）、0.765 处 0.365 → 0.357、0.925 处 0.090 → 0.058
+    /// （贴地缓收），衰减段全程单调、无过冲。
+    static let settingsBackdropMaskStops: [Gradient.Stop] = denseSampledStops(
+        anchors: settingsBackdropMaskAnchors.map { (x: $0.location, y: $0.alpha) },
+        samples: 17,
+        zeroEndTangents: true
+    ) { .black.opacity($0) }
 
     /// hero 融合渐变的采样色：透明黑 → 页底色、混合因子 f。与原
     /// 两段线性渐变的分量模型逐字一致（RGB = 页底 RGB × f、
@@ -172,11 +222,12 @@ enum LCGameTheme {
     /// 续。偏离只在 u<0.453 的图像主导段（最大约 −0.067，坡度
     /// 渐入）与 u>0.861 的收尾段（约 +0.013）。深色模式共用此
     /// 层：本轮对深色只换 stops 曲线，端点 / 中点 / 形态不动。
-    static let heroFusionStops: [Gradient.Stop] = monotoneCubicSamples(
+    static let heroFusionStops: [Gradient.Stop] = denseSampledStops(
         anchors: [(0, 0), (0.453, 0.453), (0.657, 0.657), (0.861, 0.861), (1, 1)],
         samples: 13,
-        zeroEndTangents: true
-    ).map { Gradient.Stop(color: heroBlendColor($0.y), location: $0.x) }
+        zeroEndTangents: true,
+        color: heroBlendColor
+    )
 
     /// hero 过渡带噪点不透明度（Phase 32）：置 0 即关闭噪点层。
     static let heroDitherOpacity: Double = 0.015
@@ -1244,7 +1295,7 @@ struct LCGameHomeView: View {
             }
             // 浅色专用深罩（用户看预览拍板 P1）：浅色下融合渐变把封面
             // 下部洗成近白页底、白色大标题糊在亮底上。标题文字层之下
-            // 加一层深色渐变罩：stops 与 LCGameTheme.coverScrimStops
+            // 加一层深色渐变罩：stops 与 LCGameTheme.coverScrimAnchors
             // 同锚点（峰值 0.47 对准标题带、状态行处 0.42，向下经
             // 版本行渐弱、在 hero 下缘外 12pt 处收零，不留硬界），
             // Phase 32 起改走密采样版 heroScrimStops（见下注）；
