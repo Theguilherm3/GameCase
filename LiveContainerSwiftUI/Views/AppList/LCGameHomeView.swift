@@ -416,6 +416,12 @@ struct LCGameHomeView: View {
         reduceMotion ? .linear(duration: 0.2) : .timingCurve(0.22, 0.61, 0.36, 1, duration: 0.3)
     }
 
+    /// 手柄焦点缩放的弹簧：短 response + 略欠阻尼，与 deck 的短促
+    /// 切换同风格、放大落定带一点回弹；减弱动态时同口径降为线性。
+    private var gamepadFocusAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.2) : .spring(response: 0.32, dampingFraction: 0.72)
+    }
+
     private func setFocusFromDeck(_ app: LCAppModel) {
         deckLastSwitchAt = Date()
         withAnimation(deckAnimation) {
@@ -1080,16 +1086,17 @@ struct LCGameHomeView: View {
                                 statusDot(color: gameState(app).themeColor, radius: 5)
                                     .padding(10)
                             }
-                            // 手柄焦点描边：手柄连着时给聚焦卡加奶油
-                            // 描边（动态色、深浅两模式都成立）；无手
-                            // 柄时不画，与现行界面逐字一致
-                            .overlay {
-                                if gamepadNav.hasController, focusedApp == app {
-                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                        .strokeBorder(LCGameTheme.creamColor, lineWidth: 2.5)
-                                        .allowsHitTesting(false)
-                                }
-                            }
+                            // 手柄焦点表现：手柄连着时聚焦卡整体放大
+                            // 1.07 + 柔和投影（tvOS 式焦点）；无手柄时
+                            // scale 恒 1、无投影，与现行界面逐字一致。
+                            // 防裁剪：缩放施加在封面自身 clipShape 之外
+                            // （圆角裁剪随图一起放大），本 cell、LazyVGrid、
+                            // 外层 VStack 均无任何裁剪；手柄路径又先把
+                            // 聚焦卡滚到视口中央，1.07 的增量（卡宽每侧
+                            // 约 6pt）小于网格 15pt 间距，放大边缘完整露出
+                            .scaleEffect(gamepadNav.hasController && focusedApp == app ? 1.07 : 1)
+                            .shadow(color: .black.opacity(gamepadNav.hasController && focusedApp == app ? 0.35 : 0), radius: 12, x: 0, y: 6)
+                            .animation(gamepadFocusAnimation, value: gamepadNav.hasController && focusedApp == app)
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 setFocus(app)
@@ -1108,6 +1115,8 @@ struct LCGameHomeView: View {
                     }
                     // 手柄滚动锚点（ScrollViewReader.scrollTo 的目标 id）
                     .id(key(of: app))
+                    // 聚焦卡放大后抬升绘制层级，压住相邻卡而不是被压
+                    .zIndex(gamepadNav.hasController && focusedApp == app ? 1 : 0)
                 }
             }
             .padding(.horizontal, m)
@@ -1130,15 +1139,17 @@ struct LCGameHomeView: View {
                     LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
                         .frame(width: 73, height: 41)
                         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                        // 手柄焦点描边（与网格卡同口径）：聚焦游戏在
-                        // 最近行里出现时缩略图同样加奶油描边
-                        .overlay {
-                            if gamepadNav.hasController, focusedApp == app {
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .strokeBorder(LCGameTheme.creamColor, lineWidth: 2.5)
-                                    .allowsHitTesting(false)
-                            }
-                        }
+                        // 手柄焦点表现（与网格卡同口径）：聚焦游戏在
+                        // 最近行里出现时缩略图整体放大 1.08（元素小、
+                        // 幅度略大）+ 投影，并抬升层级。防裁剪：缩放
+                        // 施加在缩略图自身 clipShape 之外，行内 HStack、
+                        // 外层 VStack 均无裁剪；1.08 的增量（宽每侧约
+                        // 2.9pt、高每侧约 1.6pt）远小于行上下 10pt
+                        // 留白与 12pt 横向间距，完整露出
+                        .scaleEffect(gamepadNav.hasController && focusedApp == app ? 1.08 : 1)
+                        .shadow(color: .black.opacity(gamepadNav.hasController && focusedApp == app ? 0.35 : 0), radius: 8, x: 0, y: 4)
+                        .animation(gamepadFocusAnimation, value: gamepadNav.hasController && focusedApp == app)
+                        .zIndex(gamepadNav.hasController && focusedApp == app ? 1 : 0)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(app.displayName)
                             .font(.system(size: 15))
@@ -1244,17 +1255,18 @@ struct LCGameHomeView: View {
                         .frame(height: 56)
                         .frame(maxWidth: .infinity)
                         .gcStartButtonBackground()
-                        // 手柄焦点提示：手柄连着时开始钮描一圈奶油
-                        // 边，明示 A 键的目标就是它；无手柄不画
-                        .overlay {
-                            if gamepadNav.hasController {
-                                Capsule()
-                                    .strokeBorder(LCGameTheme.creamColor, lineWidth: 2)
-                                    .allowsHitTesting(false)
-                            }
-                        }
                     }
                     .buttonStyle(.plain)
+                    // 手柄焦点表现：手柄连着时开始钮整体放大 1.03 +
+                    // 投影，明示 A 键的目标就是它；无手柄时 scale 恒 1、
+                    // 无投影，逐字原样。防裁剪：底栏 ZStack、HStack 到
+                    // portraitBottomBar 根视图全程无任何裁剪修饰，1.03
+                    // 的增量（高每侧约 0.9pt、宽每侧约 5pt）小于与滑杆
+                    // 钮的 14pt 间距、上方又有 108pt 渐变区兜底，完整露出
+                    .scaleEffect(gamepadNav.hasController ? 1.03 : 1)
+                    .shadow(color: .black.opacity(gamepadNav.hasController ? 0.25 : 0), radius: 10, x: 0, y: 4)
+                    .animation(gamepadFocusAnimation, value: gamepadNav.hasController)
+                    .zIndex(gamepadNav.hasController ? 1 : 0)
                     .disabled(focusedApp == nil || (focusedApp?.isAppRunning ?? false))
 
                     chromeButton(diameter: 56, systemImage: "slider.horizontal.3", fontSize: 24) {
@@ -1814,7 +1826,7 @@ enum LCGamepadNavDirection {
 /// 确认」的边沿事件，回调给 LCGameHomeView 驱动现成聚焦状态。
 /// 只在主页激活（setActive(true)）时装 handler——主页让位（面板 /
 /// 弹层打开、切后台、离开主页）即摘除，手柄断开即 hasController
-/// 转假（上层据此收起提示条与焦点描边）。全仓此前没有任何地方装
+/// 转假（上层据此收起提示条与焦点缩放）。全仓此前没有任何地方装
 /// valueChangedHandler（手柄页的按键测试是轮询读值），不存在抢占。
 /// 摇杆防抖：触发阈值 0.55、取主导轴向定格方向，回中到 0.3 以内
 /// 才重新武装——推住不连发、推一次只动一格。十字键同样只认按下
