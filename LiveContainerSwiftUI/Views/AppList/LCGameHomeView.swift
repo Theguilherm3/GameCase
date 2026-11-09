@@ -257,6 +257,7 @@ struct LCGameHomeView: View {
     @State private var deckTouchActive = false
     @State private var deckLastSwitchAt: Date = .distantPast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     // MARK: 聚焦与状态推导
 
@@ -837,6 +838,31 @@ struct LCGameHomeView: View {
                 )
                 .frame(height: height * 0.48)
             }
+            // 浅色专用深罩（用户看预览拍板 P1）：浅色下融合渐变把封面
+            // 下部洗成近白页底、白色大标题糊在亮底上。标题文字层之下
+            // 加一层深色渐变罩：峰值（黑 0.47）对准标题带、状态行处
+            // 0.42,向下经版本行渐弱、在 hero 下缘外 12pt 处收零,不留
+            // 硬界;深色模式不加、逐字保持现状(原渐变已是深色融合)。
+            if colorScheme == .light {
+                VStack {
+                    Spacer()
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Color.black.opacity(0), location: 0),
+                            .init(color: Color.black.opacity(0.22), location: 0.30),
+                            .init(color: Color.black.opacity(0.42), location: 0.52),
+                            .init(color: Color.black.opacity(0.47), location: 0.68),
+                            .init(color: Color.black.opacity(0.26), location: 0.82),
+                            .init(color: Color.black.opacity(0.08), location: 0.93),
+                            .init(color: Color.black.opacity(0), location: 1)
+                        ]),
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(height: height * 0.62 + 24)
+                    .offset(y: 12)
+                }
+                .allowsHitTesting(false)
+            }
             // 右上浮钮排
             VStack {
                 HStack {
@@ -1210,6 +1236,16 @@ struct LCGameHomeView: View {
     private func landscapeInfo(app: LCAppModel, metrics: LCLandscapeMetrics, width w: CGFloat) -> some View {
         let state = gameState(app)
         return ZStack(alignment: .top) {
+            // 浅色专用深罩（同竖屏 P1）：浅色下背景晕染收尾是浅色页
+            // 底、白色标题只剩阴影撑对比。标题簇之下垫一块模糊深色
+            // 斑（圆角矩形 + blur 30,边缘全柔、无硬界），深色不加。
+            if colorScheme == .light {
+                RoundedRectangle(cornerRadius: 60)
+                    .fill(Color.black.opacity(0.36))
+                    .frame(width: min(640, w - 16), height: metrics.short ? 130 : 168)
+                    .blur(radius: 30)
+                    .allowsHitTesting(false)
+            }
             // 隐藏占位先量好两行标题 + 34 状态行，切换时只有文字淡换
             VStack(spacing: 8) {
                 Text("M\nM")
