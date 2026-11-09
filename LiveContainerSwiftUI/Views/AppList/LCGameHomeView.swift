@@ -253,7 +253,9 @@ struct LCGameHomeView: View {
     // 「最近游玩」区是分组第 0 组（玩过的游戏）的独立呈现，仍走
     // recentApps，不受本快照影响；聚焦与 hero 也不读顺序。
     // carouselOffset 是 >3 张时手势轮播的滚动量（点），静止时恒
-    // 等于聚焦序号 × stride。carouselDragLogicalOffset 是拖动中的
+    // 等于聚焦序号 × stride；顺序变化（回库重排 / 增删）时由
+    // snapCarouselToFocus 在同一次更新里无动画重算（Phase 28）。
+    // carouselDragLogicalOffset 是拖动中的
     // 未钳制逻辑偏移（手指原始位移换算）：显示偏移在两端橡皮筋化，
     // 落点投影按逻辑偏移算，两者只在越界拖动时不同。
     @State private var libraryOrderKeys: [String] = []
@@ -1587,11 +1589,19 @@ struct LCGameHomeView: View {
 
     /// 4 张起（NX carousel 的手势移植）：部署目标 15 用不了 NX 的
     /// ScrollView 吸附 API，改手势驱动同一套几何——place = 序号 - 偏移 /
-    /// stride，每卡按 FlowTilt 变形：近处（|place| 钳 ±1）绕 Y 轴回转
-    /// 最多 24°（透视 0.35）、缩放 1 - |near|×0.22、内收 near×卡宽 0.28、
-    /// 压暗 |near|×0.25；远处再多退 far×卡宽 0.55、压暗至多 0.1；
-    /// zIndex = -|place|，近卡恒在上。只构造 |place| ≤ 2 的卡（聚焦 ±2），
-    /// 更远的卡不建视图、不触发封面解析，长列表不预载全部封面。
+    /// stride，每卡按 FlowTilt 变形：缩放 1 - |near|×0.22（near = place
+    /// 钳 ±1）、内收 near×卡宽 0.28、压暗 |near|×0.25；远处再多退 far×
+    /// 卡宽 0.55、压暗至多 0.1；zIndex = -|place|，近卡恒在上。只构造
+    /// |place| ≤ 2 的卡（聚焦 ±2），更远的卡不建视图、不触发封面解析，
+    /// 长列表不预载全部封面。
+    /// 轮播感（Phase 28）：回转角改由连续 place 驱动、不随 near 在 ±1
+    /// 饱和——angle = -clamp(place, ±1.5)×30°（±1 卡 30°、|place|≥1.5
+    /// 45° 封顶，coverflow 常见 30°–45° 区间），透视 0.35 → 0.45。旧口径
+    /// -near×24° 在 ±1 外角度冻结，后段卡是一面平墙跟着平移、读作整排
+    /// 被推走；新口径下每张卡的角度随 place 逐帧插值到 45°，整排像轮盘
+    /// 转过去。位置公式（place×stride − 内收 − 远退）与缩放 / 压暗曲线
+    /// 逐字未动，命中与落点不经几何反推、不受影响；中心卡 angle 0、
+    /// scale 1.0 的终点不变。
     private func landscapeCarousel(list: [LCAppModel], metrics: LCLandscapeMetrics, size: CGSize) -> some View {
         let w = size.width
         let cover = metrics.cover
@@ -1604,6 +1614,7 @@ struct LCGameHomeView: View {
                 if abs(place) <= 2 {
                     let app = list[idx]
                     let near = max(-1, min(1, place))
+                    let tilt = max(-1.5, min(1.5, place))
                     let far = place > 1 ? place - 1 : place < -1 ? place + 1 : 0
                     landscapeCard(app: app, cardW: cover, isFocused: idx == focusIdx)
                         // Phase 15 审计：命中走 position 布局落位（见
@@ -1615,9 +1626,9 @@ struct LCGameHomeView: View {
                             gameContextMenu(for: app)
                         }
                         .rotation3DEffect(
-                            .degrees(reduceMotion ? 0 : -near * 24),
+                            .degrees(reduceMotion ? 0 : -tilt * 30),
                             axis: (x: 0, y: 1, z: 0),
-                            perspective: 0.35
+                            perspective: 0.45
                         )
                         .scaleEffect(1 - abs(near) * 0.22)
                         .brightness(-abs(near) * 0.25 - min(abs(far), 1) * 0.1)
@@ -1637,13 +1648,19 @@ struct LCGameHomeView: View {
         .contentShape(Rectangle())
         .gesture(carouselDrag(list: list, stride: stride))
         .onAppear {
-            carouselOffset = CGFloat(focusIdx) * stride
+            snapCarouselToFocus(list: list, stride: stride)
         }
         .onChange(of: focusKey) { _ in
             syncCarouselOffset(list: list, stride: stride)
         }
+        // 顺序签名（Phase 28）：库重排 / 增删令聚焦卡在 list 里的序号
+        // 变化而 focusKey 不变时，focusKey 的 onChange 不会火——偏移的
+        // 同步挂到顺序本身上，见 snapCarouselToFocus 注释。
+        .onChange(of: list.map { key(of: $0) }) { _ in
+            snapCarouselToFocus(list: list, stride: stride)
+        }
         .onChange(of: w) { _ in
-            carouselOffset = CGFloat(landscapeFocusIndex(in: list)) * stride
+            snapCarouselToFocus(list: list, stride: stride)
         }
     }
 
@@ -1766,6 +1783,49 @@ struct LCGameHomeView: View {
                 }
                 finishCarouselScroll(epoch: carouselScrollEpoch)
             }
+    }
+
+    /// 偏移按现行焦点无动画落位（Phase 28）：把 carouselOffset 在
+    /// 当前 list 下重算为 聚焦序号 × stride，关动画直接落位，并作废
+    /// 在途的 settle 计时（epoch +1、settled 直接置真）。
+    ///
+    /// 根因（回库错位，一直存在）：carouselOffset 是一份以「序号 ×
+    /// stride」计价的独立存储量，序号的含义随 orderedApps 的顺序而
+    /// 变，但旧同步点只有三处——carousel 自己的 onAppear（触发时父级
+    /// onAppear 尚未刷新 libraryOrderKeys、读到的还是旧序，写回的是
+    /// 同一个旧值）、onChange(focusKey)（动画跟随）、onChange(宽度)。
+    /// 回库时 root onAppear 按最近游玩重排 libraryOrderKeys，聚焦卡
+    /// 在新序里的序号变了，focusKey 却没变：没有任何一处再写偏移，
+    /// 几何中心停在 list[旧序号]，而标题 / 计数 / 信息区是 focusKey
+    /// 的纯推导、逐帧正确——于是中心卡与标题对不上（中心丝之歌、
+    /// 标题 Hades II 之类），且聚焦卡本人停在 place ≠ 0 处不达正面
+    /// 态，非要用户再点一下（走 carouselTap 现写偏移）才对齐；偶尔
+    /// 「自己再滑一下」是迟到的 focusKey 变化触发了 syncCarouselOffset
+    /// 的动画跟随。shelf（≤3 张）的位置每帧由 chosen 现算、无这份存
+    /// 储量，故只有 carousel 中招。
+    ///
+    /// 一致性保证：本函数挂在顺序签名（list 的 key 序列）的 onChange
+    /// 上——任何变序 / 增删与偏移重算落在同一次状态更新里，渲染出的
+    /// 第一帧即对齐值，不靠延时补丁；onAppear 与宽度变化的旧落位点
+    /// 也统一走本函数。拖动中不干预（手势的 list 是手势开始时的快照，
+    /// 且变序事件都发生在牌组被弹层盖住或回库出现的时刻、与拖动不
+    /// 并发）。落位后 settled 即真：回库看到的聚焦卡可直接点启动，
+    /// 与「已停稳的聚焦卡」裁决口径一致。
+    private func snapCarouselToFocus(list: [LCAppModel], stride: CGFloat) {
+        guard !carouselDragging else {
+            return
+        }
+        carouselScrollEpoch += 1
+        carouselSettled = true
+        let target = CGFloat(landscapeFocusIndex(in: list)) * stride
+        guard carouselOffset != target else {
+            return
+        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            carouselOffset = target
+        }
     }
 
     /// 聚焦被外部改动（列表增删、竖屏切歌后转横屏）时把偏移跟上；
