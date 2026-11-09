@@ -621,17 +621,54 @@ struct LCGameSettingsView: View {
                 .padding(.top, bannerHeight - (hasBanner ? 22 : 0))
         }
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
-        // 浅色专用深罩 + 噪点自 Phase 39 起并入背景栈本体
-        // （LCSettingsHeaderBackdrop 内部、按主页 hero 的层序排
-        // 布），本处不再单挂。此前罩只挂在本 ZStack 的
-        // background 里——只有头内实例一份，页面根出血条实例缺
-        // 罩与噪点，两实例并非同一渲染栈；Phase 39 把整栈（底
-        // 图 / 融合 / 状态栏 scrim / 深罩 / 噪点）收进背景视图
-        // 本体，两实例逐层恒等（详见背景栈注释）。罩的锚点 /
-        // 采样与 hero 逐字同源（settingsScrimStops ≡
-        // heroScrimStops），几何改随背景画布表达：顶 =
-        // topInset、底 = 图最后一行像素（Phase 30 同终点口径
-        // 不变，画布高 600 时即旧制高 532 / 下探 160）。
+        .background(alignment: .bottom) {
+            // 浅色专用深罩（用户看预览拍板 P1）：本背景层在封面
+            // backdrop 之上、信息簇之下。backdrop 的 mask 在标题带
+            // 已衰减到约半透明，浅色下页底透出把白标题与副行洗没；
+            // 此罩不走 mask。副行（「游戏设置 · 版本」）就在罩的覆
+            // 盖内、且其前景本就是压图语义（creamOnDark / 白 0.5），
+            // 随罩解决、不改语义色。深色模式不加、逐字保持现状。
+            // stops 与几何：stops 与主页 hero 同锚点同采样
+            // （Phase 33 起改走 LCGameTheme.settingsScrimStops
+            // 密采样版，见主题注释）。几何经两轮修订：
+            // #69 把罩高拉到 500、下探 128 拉长尾巴，台阶减轻但
+            // 仍在（用户复验）——根因是罩与图的终点不一致：罩在
+            // 帧下缘 +128 处收零，而封面图（backdrop 向下溢出
+            // 160、mask 在其末端归零）画到 +160 才结束，两条衰减
+            // 曲线在不同位置落地，+128 处合成曲线折角成横向台阶。
+            // Phase 30 改为罩与图同终点：罩底边与图的绘制底边
+            // （帧下缘 +160）严丝合缝，罩高 532（帧上 372 + 帧下
+            // 160，顶边与 #69 同位）、下探 = 160，loc 1（alpha 0）
+            // 正落在图的最后一行像素上，罩不探出图外一像素；图
+            // 像向页底的融合仍由 backdrop 自身的 mask 完成（图自
+            // 身淡出），罩只在图内压暗。标题带强度不回退：底锚定
+            // 换算下标题块（帧下缘上 26–88pt）落在 loc 0.53–0.65
+            // （约 0.43–0.47，#69 为 0.43–0.45）、副行（约 8pt）
+            // loc 约 0.68（约 0.47，#69 为 0.39，只强不弱）。
+            // Phase 33（设置页同步主页 Phase 32 的平滑口径，用户
+            // 在 S2Arm 兜底图页头实测台阶后令同步处理）：罩 stops
+            // 改走 settingsScrimStops（同锚点单调三次密采样 17
+            // 点），标题带 / 副行等效强度只强不弱（见主题注释的
+            // 对照）；罩上再叠主页同纹理同不透明度的静态噪点
+            // （heroNoiseImage × heroDitherOpacity），与罩同带同
+            // 几何（高 532、下探 160），打散残余量化色带；仅浅
+            // 色（与罩同条件、与主页一致），深色不加层。
+            if colorScheme == .light {
+                ZStack {
+                    LinearGradient(stops: LCGameTheme.settingsScrimStops, startPoint: .top, endPoint: .bottom)
+                        .frame(height: 532)
+                        .offset(y: 160)
+                    if LCGameTheme.heroDitherOpacity > 0 {
+                        Image(uiImage: LCGameTheme.heroNoiseImage)
+                            .resizable()
+                            .frame(height: 532)
+                            .offset(y: 160)
+                            .opacity(LCGameTheme.heroDitherOpacity)
+                    }
+                }
+                .allowsHitTesting(false)
+            }
+        }
         .background {
             // 背景层显式上移 topInset 到物理顶（布局帧不动）：绘制
             // 总高经 extraTop 同步加 topInset，图像映射与 NX 一致；
@@ -1315,117 +1352,65 @@ private struct LCSettingsHeaderBackdrop: View {
     let topInset: CGFloat
     let extraTop: CGFloat
 
-    @Environment(\.colorScheme) private var colorScheme
-
-/// 设置页页头背景整栈（Phase 39 起为单栈结构，此前是 NX
-/// PaneBanner.background 移植 + 头外单挂的罩）：自下而上五层，
-/// 全部按同一张「画布」坐标表达——画布总高 = geo 高 +
-/// extraTop + 160（Phase 28 口径不变：头内实例帧高 = 头部高、
-/// extraTop = topInset、帧经 .offset 上移 topInset；出血条实
-/// 例帧高 = 头部高 + topInset、extraTop = 0；两者总高同为头部
-/// 高 + topInset + 160、绘制原点同为物理顶 + 滚动位移）：
-/// 1) 底图：有横图 = 原图 + 压暗渐变（settingsBannerShadeStops，
-/// Phase 35 密采样、锚点逐点不变）；无横图 = 图标自体放大
-/// 1.4 + blur 40 + saturation 1.2 + 黑 0.38 叠加。向下溢出
-/// 160 垫进内容区。
-/// 2) 融合层（Phase 39 新增，取代旧 mask 淡出）：与主页 hero
-/// 同一款——stops 字面复用 LCGameTheme.heroFusionStops（预乘
-/// 混合：透明黑 → 页底色），带 = 画布底部 45%、带顶 f = 0、
-/// 带底（图最后一行像素）f = 1，合成在图末行精确到达页底色
-/// ——Phase 30「同终点」的等价形态（旧 mask 在末行归零 + 罩
-/// loc 1 同点收零，两者都保留：罩的 loc 1 仍落在图末行）。
-/// 3) 状态栏 scrim（Phase 26/35 逐字保留）：topInset > 0 时
-/// 高 topInset + 50、锚图顶，stops 走 settingsStatusScrimStops。
-/// 4) 浅色深罩（Phase 39 自 coverHeader 并入）：stops =
-/// settingsScrimStops（与 heroScrimStops 同锚点同采样、逐点
-/// 相等）；几何随画布表达：顶 = topInset、底 = 画布底（画布
-/// 600 时即旧制顶 68 / 高 532，与 Phase 30 逐点一致）。
-/// 5) 噪点（Phase 33 起有、Phase 39 随栈并入）：heroNoiseImage
-/// × heroDitherOpacity，与罩同带。
-///
-/// Phase 39 的两个定案（用户装机回图 + 逐行采样）：
-/// ①标题下一条深色带：红圈图右带逐行采样，亮度在画布 loc
-/// 0.525–0.575 一段恒为 ≈130.1（上下分别为峰值 198 与卡缘
-/// 173），是平底碗。成因在旧 mask 与罩的叠形：mask 离开满显
-/// 平台（loc 0.45）后缓降、罩在 loc 0.52–0.68 是零切线宽平
-/// 台，两条平段叠加令合成亮度在该段斜率 ≈0、其后又被 mask
-/// 的加速淡出陡然抬起——平底 + 下缘折角即带感。改融合后按同
-/// 一 Fritsch–Carlson 采样算法在均匀底图（亮度 120 / 160 /
-/// 200）下复算：谷底 +2 亮度等宽带 54–81pt → 48–63pt、近零
-/// 斜率段 27–33pt → 15–27pt，状态 / 标题 / 版本 / 说明四行
-/// 的合成亮度逐行只降不升（压暗只强不弱，如 B = 160 时版本
-/// 行 103 → 97、说明行 102 → 93，状态行恒等、标题 −1）。
-/// ②顶部浅层：两实例此前不是同一栈——深罩 + 噪点只在头内
-/// 实例（coverHeader 的 background），出血条只有底图 + 状态
-/// 栏 scrim；且旧 mask 是全栈唯一不按画布高显式定帧的渐变
-/// （按各实例自身帧高求值，372 与 440 两份映射不同）。本轮
-/// 整栈收进本视图、每条渐变都按画布坐标定帧，两实例仅剩帧
-/// 高与 offset 之差，渲染逐层恒等，安全线上下不再有栈差。
-/// 深色模式：融合层与 hero 同为双模式共用（hero 本就无
-/// mask）；与旧 mask 的数值差集中在画布中段（图残留权重
-/// loc 0.68 处 0.55 → 约 0.74），末行同为精确页底，文字行
-/// 在深色下底图本就深、对照见 PR。融合层仅在有底图时绘制
-/// （无图时旧构造为全透明，不凭空加带）。
+/// NX PaneBanner.background 移植：底图按头部实高 +160 绘制（向下
+/// 溢出垫进内容区）、整体罩 NX 的渐隐 mask。有横图：原图 +
+/// 压暗渐变（clear@0.3 → 黑 0.4@0.6 → 黑 0.55@1，Phase 35 起
+/// stops 改走 LCGameTheme.settingsBannerShadeStops 密采样、
+/// 锚点逐点不变）；无横图：图标自体放大 1.4 + blur 40 +
+/// saturation 1.2 + 黑 0.38 叠加。
+/// mask stops：锚点黑@0 / 黑@0.45 / 黑 0.55@0.68 / 黑 0.18@0.85
+/// / clear@1，Phase 33 起按同锚点单调三次密采样作 stops（见
+/// LCGameTheme.settingsBackdropMaskStops：锚点逐点过、终点
+/// loc 1 归零逐字不变、段内平滑进出）。
+/// 状态栏 scrim（Phase 26 补回，NX 原规格）：叠在图层之上、mask
+/// 之内，topInset > 0 时黑 0.5 → clear、高 topInset + 50，锚在
+/// 图顶（背景帧已出血到物理顶）——亮封面下状态栏的时钟与电量
+/// 靠它保可读；NX 结构里此 overlay 盖在图层组全体之上，有 /
+/// 无横图都生效。Phase 35：stops 改走 settingsStatusScrimStops
+/// 密采样——原两段线性渐变的下缘（topInset + 50 = 118pt）是
+/// 斜率一步跳零的硬界，用户在兜底图浅色页头逐行采样定位到
+/// 它（见主题注释的定案过程）；锚点 0.5 / 0 逐点不变、上半
+/// 带只强不弱。
+/// 绘制总高（Phase 28）：geo 高 + extraTop + 160。两个实例共用
+/// 本视图且映射恒等——头内实例帧高 = 头部高、extraTop =
+/// topInset（帧再经 .offset 上移 topInset）；页面根出血条实例
+/// 帧高 = 头部高 + topInset、extraTop = 0。两者总高同为头部高
+/// + topInset + 160、绘制原点同为物理顶 + 滚动位移。
 var body: some View {
     GeometryReader { geo in
-        let totalHeight = geo.size.height + extraTop + 160
-        let fusionHeight = totalHeight * 0.45
-        ZStack(alignment: .topLeading) {
-            // 1) 底图层（层序与构造见类型注释）
-            Group {
-                if hasBanner, let image {
-                    ZStack {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: geo.size.width, height: totalHeight)
-                        LinearGradient(stops: LCGameTheme.settingsBannerShadeStops, startPoint: .top, endPoint: .bottom)
-                            .frame(width: geo.size.width, height: totalHeight)
-                    }
-                } else if let image {
+        Group {
+            if hasBanner, let image {
+                ZStack {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: geo.size.width, height: totalHeight)
-                        .scaleEffect(1.4)
-                        .blur(radius: 40)
-                        .saturation(1.2)
-                        .overlay(Color.black.opacity(0.38))
-                } else {
-                    Color.clear
+                        .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
+                    LinearGradient(stops: LCGameTheme.settingsBannerShadeStops, startPoint: .top, endPoint: .bottom)
+                    .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
                 }
+            } else if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
+                    .scaleEffect(1.4)
+                    .blur(radius: 40)
+                    .saturation(1.2)
+                    .overlay(Color.black.opacity(0.38))
+            } else {
+                Color.clear
             }
-            // 2) 融合层（Phase 39）：heroFusionStops 字面复用，
-            // 带 = 画布底部 45%，带底与图最后一行像素齐平、
-            // f = 1 精确到达页底色。仅有底图时绘制。
-            if image != nil {
-                LinearGradient(stops: LCGameTheme.heroFusionStops, startPoint: .top, endPoint: .bottom)
-                    .frame(width: geo.size.width, height: fusionHeight)
-                    .offset(y: totalHeight - fusionHeight)
-            }
-            // 3) 状态栏 scrim（Phase 26/35 逐字保留）
+        }
+        .frame(width: geo.size.width, height: geo.size.height + extraTop + 160, alignment: .top)
+        .overlay(alignment: .top) {
             if topInset > 0 {
                 LinearGradient(stops: LCGameTheme.settingsStatusScrimStops, startPoint: .top, endPoint: .bottom)
                     .frame(height: topInset + 50)
             }
-            // 4) 浅色深罩 + 5) 噪点（Phase 39 并入本栈）：罩顶 =
-            // topInset、罩底 = 画布底（图最后一行像素），与旧
-            // coverHeader 单挂时逐点同位；噪点与罩同带。
-            if colorScheme == .light {
-                LinearGradient(stops: LCGameTheme.settingsScrimStops, startPoint: .top, endPoint: .bottom)
-                    .frame(width: geo.size.width, height: totalHeight - topInset)
-                    .offset(y: topInset)
-                if LCGameTheme.heroDitherOpacity > 0 {
-                    Image(uiImage: LCGameTheme.heroNoiseImage)
-                        .resizable()
-                        .frame(width: geo.size.width, height: totalHeight - topInset)
-                        .offset(y: topInset)
-                        .opacity(LCGameTheme.heroDitherOpacity)
-                }
-            }
         }
-        .frame(width: geo.size.width, height: totalHeight, alignment: .topLeading)
-        .allowsHitTesting(false)
+    }
+    .mask {
+        LinearGradient(stops: LCGameTheme.settingsBackdropMaskStops, startPoint: .top, endPoint: .bottom)
     }
 }
 
@@ -1439,10 +1424,6 @@ var body: some View {
 /// 单独订阅 LCSettingsHeaderScroll：滚动逐帧只重排本视图，设置页
 /// body 不再逐帧重算（Phase 29）。topInset = 0（横屏面板形态）时
 /// 不渲染；无横图（图标模糊兜底）时同体背景同样出血。不拦截触摸。
-/// Phase 39：背景本体已是整栈（底图 / 融合 / 状态栏 scrim / 深罩
-/// / 噪点，见 LCSettingsHeaderBackdrop 注释），本条与头内那份逐
-/// 层恒等——此前深罩与噪点只有头内一份、本条缺层，安全线上下
-/// 不是同一渲染栈（用户实测顶部另成一层浅色）。
 private struct LCSettingsTopBleed: View {
     @ObservedObject var scroll: LCSettingsHeaderScroll
     let image: UIImage?
