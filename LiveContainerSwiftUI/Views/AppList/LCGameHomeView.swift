@@ -572,6 +572,10 @@ struct LCGameHomeView: View {
     @State private var carouselOffsetCards: CGFloat = 0
     @State private var carouselDragStartCards: CGFloat = 0
     @State private var carouselDragLogicalCards: CGFloat = 0
+    // 拖动末段采样（Phase 38）：(时刻, 逻辑偏移) 序列，松手时取末
+    // 120ms 窗口估真实末速——DragGesture 的 value.velocity 是全程
+    // 阻尼平均、快甩时系统性低估末速，见 deckReleaseVelocityPerSecond。
+    @State private var carouselDragSamples: [(time: Date, logical: CGFloat)] = []
     @State private var carouselDragging = false
     @State private var carouselSettled = true
     @State private var carouselScrollEpoch = 0
@@ -2290,6 +2294,7 @@ struct LCGameHomeView: View {
                     // 缝接管、不跳位。
                     stopDeckMomentum()
                     carouselDragStartCards = carouselOffsetCards
+                    carouselDragSamples = [(time: value.time, logical: carouselOffsetCards)]
                     beginCarouselScroll()
                 }
                 // Phase 27：逻辑偏移 = 手指原始位移的无钳制换算，落点
@@ -2300,6 +2305,10 @@ struct LCGameHomeView: View {
                 // 逐字未动），内部全程卡位。
                 let logical = carouselDragStartCards - value.translation.width / stride
                 carouselDragLogicalCards = logical
+                // Phase 38：末段采样只留末 120ms（估末速的窗口），
+                // 逻辑偏移是未钳制口径、与落点投影同源。
+                carouselDragSamples.append((time: value.time, logical: logical))
+                carouselDragSamples.removeAll { value.time.timeIntervalSince($0.time) > 0.12 }
                 let maxCards = CGFloat(list.count - 1)
                 if logical < 0 {
                     carouselOffsetCards = logical * 0.35
@@ -2346,11 +2355,30 @@ struct LCGameHomeView: View {
                 // 进动量后不再有「目标」，行程由初速与衰减率决定；
                 // 不满足门槛的低速 / 短行程松手逐字走下面的旧路径
                 // （投影定目标 + deckSettleAnimation）。
-                let velocityPerSecond = velocity * 1000
+                // Phase 38：门槛与动量初速改吃末段采样估出的真实末
+                // 速（deckReleaseVelocityPerSecond）——value.velocity
+                // 是全程阻尼平均，快甩时可低估末速近半，按它判门槛
+                // 会把真高速甩动误判成短行程、按它喂驱动则行程与
+                // 甩力脱钩。低速路径内部仍用上面的阻尼 velocity 算
+                // card 与 settle 初速，逐字未动——采样估速只决定
+                // 「进不进动量、进去带多快」，不改低速落点口径。
+                let velocityPerSecond = deckReleaseVelocityPerSecond(
+                    endTime: value.time,
+                    endLogical: carouselDragLogicalCards,
+                    fallbackPerSecond: velocity * 1000
+                )
+                let estimatedCard = Self.cardSnap(
+                    logicalCards: carouselDragLogicalCards,
+                    velocityCards: velocityPerSecond / 1000,
+                    count: list.count
+                )
+                let estimatedProjectedDistance = CGFloat(estimatedCard) - carouselOffsetCards
+                // 低速路径的 settle 行程仍按阻尼口径的 card 算（与
+                // 分支内写入的目标同源），逐字保持 Phase 37 前口径。
                 let projectedDistance = CGFloat(card) - carouselOffsetCards
                 if !reduceMotion,
                    abs(velocityPerSecond) > Self.deckMomentumSnapVelocity,
-                   abs(projectedDistance) > 1,
+                   abs(estimatedProjectedDistance) > 1,
                    carouselOffsetCards >= 0,
                    carouselOffsetCards <= CGFloat(list.count - 1) {
                     startDeckMomentum(velocityPerSecond: velocityPerSecond, list: list)
@@ -2364,6 +2392,35 @@ struct LCGameHomeView: View {
                     finishCarouselScroll(epoch: carouselScrollEpoch)
                 }
             }
+    }
+
+    /// 松手末速估计（Phase 38）：取拖动末 120ms 采样窗口内最早的
+    /// 样本与松手点求斜率（卡/s，朝后一张卡为正、与 value.velocity
+    /// 换算后的 velocity 同号同口径）。审计结论：速度链各站单位无
+    /// 误——value.velocity 是 pt/s、除以 stride（现行度量下约
+    /// 330pt）得卡/s；问题在信号本身：DragGesture 的 velocity 是
+    /// 全手势的阻尼平均，快速甩动的末速集中在最后约 100ms，平均
+    /// 值可低估近半（硬甩时真末速约 4000pt/s ≈ 12 卡/s，阻尼值常
+    /// 只报约 2000pt/s ≈ 6 卡/s）。采样斜率是同一手势的直接测量，
+    /// 不引入增益：窗口跨度不足 50ms（极短拖动，样本太少）、或斜
+    /// 率与阻尼值反向（末段已回拉）时回退阻尼值；斜率绝对值钳 60
+    /// 卡/s 仅防采样噪声尖峰，与行程上限无关（行程仍只由初速与
+    /// λ 决定）。手指末段停顿再松开时，窗口内逻辑偏移不再变化、
+    /// 斜率自然趋零，不会把停顿前的速度带进动量。
+    private func deckReleaseVelocityPerSecond(endTime: Date, endLogical: CGFloat, fallbackPerSecond: CGFloat) -> CGFloat {
+        let window = carouselDragSamples.filter { endTime.timeIntervalSince($0.time) <= 0.12 }
+        guard let first = window.first else {
+            return fallbackPerSecond
+        }
+        let span = endTime.timeIntervalSince(first.time)
+        guard span >= 0.05 else {
+            return fallbackPerSecond
+        }
+        let slope = (endLogical - first.logical) / CGFloat(span)
+        if fallbackPerSecond != 0, slope != 0, (slope > 0) != (fallbackPerSecond > 0) {
+            return fallbackPerSecond
+        }
+        return min(60, max(-60, slope))
     }
 
     /// 偏移按现行焦点无动画落位（Phase 28）：把 carouselOffsetCards
@@ -2471,16 +2528,22 @@ struct LCGameHomeView: View {
         finishCarouselScroll(epoch: carouselScrollEpoch)
     }
 
-    /// 动量摩擦衰减率 λ（Phase 37）：速度 v(t) = v₀·e^(−λt)，总行
-    /// 程 D = v₀/λ。λ = 5.0 时 D = 0.20·v₀，对照旧投影口径
-    /// 0.22·v₀ 约 0.9 倍——各典型速度下与旧投影目标的差 ≤ 0.5 卡
-    /// （v₀ = 25 时），恒在 ±1 卡内，且偏短不偏长（防滚过头由行程
-    /// 关系本身控制、不靠中途改目标）。
-    private static let deckMomentumDecay: CGFloat = 5.0
+    /// 动量摩擦衰减率 λ（Phase 37 立、Phase 38 复调）：速度
+    /// v(t) = v₀·e^(−λt)，总行程 D = v₀/λ，只由初速与 λ 决定、
+    /// 不设人为上限（到界停界是唯一截断）。Phase 37 的 λ = 5.0 是
+    /// 按「D ≈ 旧投影 0.22·v₀」标的，但那是拿阻尼平均速度标的：
+    /// 采样估速后硬甩真末速约 12 卡/s，λ = 5.0 也只给 2.4 卡行
+    /// 程——与用户「甩得很快也滚不到」吻合。λ = 2.6 复调后行程系
+    /// 数 0.385·v₀：2 卡行程对应 v₀ = 5.2 卡/s（约 1700pt/s，寻
+    /// 常一甩）、5 卡对应 v₀ = 13 卡/s（约 4300pt/s，真硬甩），
+    /// 甩力与行程恢复比例、最硬的甩加拖动段行程可达列尾。
+    private static let deckMomentumDecay: CGFloat = 2.6
     /// 动量收尾阈值（卡/s）：速度衰减到此值即结束积分、用现行短
-    /// 曲线把剩余分数卡吸附到最近卡。0.8 卡/s 时单卡通过约 1.25s，
-    /// 已是「逐张停出」的末段节奏。
-    private static let deckMomentumSnapVelocity: CGFloat = 0.8
+    /// 曲线把剩余分数卡（≤0.5 卡）吸附到最近卡。Phase 38 由 0.8
+    /// 提到 1.2：λ 变小后低速尾段拉长，0.8 时最后约 0.7 卡要爬
+    /// 约 0.44s；1.2 时吸附接管点提前到剩余约 0.46 卡，尾段仍是
+    /// 约 3 卡/s 以下逐张停出的节奏、又不拖。
+    private static let deckMomentumSnapVelocity: CGFloat = 1.2
 
     /// Cover Flow 式自由动量（Phase 37，取代 Phase 35 在高速多卡
     /// 松手路径上的匀速定时曲线）：用户以 iPhone 4 年代音乐播放
@@ -2492,13 +2555,16 @@ struct LCGameHomeView: View {
     /// 分数卡（≤0.5 卡）吸附到最近卡。220ms 投影定目标只保留在
     /// 低速 / 短行程松手路径（onEnded 门槛外，逐字旧式）。
     ///
-    /// 测算（λ = 5.0、阈值 0.8，按总行程反推初速）：行程 2 卡
-    /// （v₀ = 10 卡/s）：动量段 0.51s 走 1.84 卡，吸附 ≤0.5 卡 /
-    /// 0.3s（占总时长约 37%）；行程 3 卡（v₀ = 15）：动量段
-    /// 0.59s 走 2.84 卡，吸附约 34%；行程 5 卡（v₀ = 25）：动
-    /// 量段 0.69s 走 4.84 卡，吸附约 30%。逐卡通过速率 = 当帧速
-    /// 度：起步 10–25 卡/s 疾过、末段近阈值时约 0.8–2 卡/s 逐
-    /// 张停出——与 #76 匀速到底的剖面正相反，是本模型的目的。
+    /// 测算（Phase 38 复调后，λ = 2.6、阈值 1.2，按总行程反推
+    /// 初速；吸附段 = deckSettleAnimation 的 ≤1 卡原式 0.3s）：
+    /// 行程 2 卡（v₀ = 5.2 卡/s）：动量段 0.56s 走 1.54 卡（逐
+    /// 卡 0.27 / 0.30s），吸附 0.46 卡，总约 0.86s；行程 3 卡
+    /// （v₀ = 7.8）：动量段 0.72s 走 2.54 卡（逐卡 0.16 / 0.27
+    /// / 0.30s），总约 1.02s；行程 5 卡（v₀ = 13）：动量段
+    /// 0.92s 走 4.54 卡（逐卡 0.09 / 0.11 / 0.16 / 0.27 /
+    /// 0.30s），总约 1.22s。逐卡通过速率 = 当帧速度：起步疾
+    /// 过、尾段约 1.2–3 卡/s 逐张停出——与 #76 匀速到底的剖面
+    /// 正相反，是本模型的目的。
     ///
     /// 刚性（承 Phase 36 单时钟）：积分逐帧解析求解（Δ偏移 =
     /// v/λ·(1 − e^(−λΔt))，帧率无关）并**直接写偏移状态本身**、
@@ -2510,6 +2576,28 @@ struct LCGameHomeView: View {
     /// 弹回整列；橡皮筋仍只是拖动跟随段的事。焦点语义不变：积
     /// 分逐帧按最近卡过中点提交（setFocusFromDeck），sync 的动
     /// 画跟随在动量期被 carouselMomentumActive 守卫挡下。
+    ///
+    /// Phase 38 复盘（#77 装机验收两缺陷同根）：用户报「有时停在
+    /// 过渡位、无正面卡且标题与画面对不上」+「滚得慢、甩得再快
+    /// 也只到第三张」。查实根因不在积分与所有权：驱动对象是
+    /// @State 持有、稳过焦点提交的重渲染；坏在
+    /// LCDeckMomentumDriver.start() 开头先调 stop()，而 stop()
+    /// 按断环约定把 onTick 清空——startDeckMomentum 偏是先赋
+    /// onTick 再 start()，回调当场被自己人抹掉，DisplayLink 空
+    /// 转、tick 永不触发。后果与两缺陷逐项吻合：越过门槛的硬甩
+    /// 松手后偏移冻结在分数位、吸附永不发起（停过渡位；焦点停
+    /// 在拖动末段的最近卡、画面停在分数位，静止后无人再对齐，
+    /// 即标题 / 计数与中心对不上）；全程只有手指拖动段在动、松
+    /// 手续滚恒为零，总行程 = 指触距离（约两卡），即「慢且只到
+    /// 第三张」。「有时」是门槛依赖：慢甩不进动量、走旧路径正
+    /// 常落位，只有硬甩进这条死路。修法：start() 只废旧链不清
+    /// onTick（见驱动类注释）；stop() 的断环清空保留，只由
+    /// stopDeckMomentum 走。终局必然性复核：动量的全部出口都有
+    /// 收尾方——衰减 / 到界走 endDeckMomentum（吸附 + 焦点无条
+    /// 件对齐到最终静止序号）、点卡走 carouselTap 的落位、落指
+    /// 走拖动 onEnded、snap / 离屏先停驱动且 snap 自带整数落
+    /// 位；syncCarouselOffset 的动画跟随在动量期被守卫挡下、挡
+    /// 的只是抢写，吸附发起不在它那条路上，不会被挡掉。
     private func startDeckMomentum(velocityPerSecond: CGFloat, list: [LCAppModel]) {
         beginCarouselScroll()
         carouselMomentumActive = true
@@ -2549,6 +2637,12 @@ struct LCGameHomeView: View {
         }
     }
 
+    /// 动量的唯一正常出口（Phase 37；Phase 38 明示其终局职责）：
+    /// 衰减到阈值与到界都收束到这里——先停驱动，再无条件把偏移
+    /// 吸附到整数卡位、焦点对齐到同一序号（最终静止序号），标
+    /// 题 / 计数是焦点的纯推导、随之与画面一致，不依赖积分途中
+    /// 的过中点提交是否恰好落对。本函数直调 withAnimation、不经
+    /// syncCarouselOffset，动量守卫挡不到它。
     private func endDeckMomentum(list: [LCAppModel], snapTo card: Int) {
         stopDeckMomentum()
         withAnimation(deckSettleAnimation(distanceCards: CGFloat(card) - carouselOffsetCards)) {
@@ -2641,14 +2735,19 @@ private struct LCDeckCardTransform: ViewModifier, Animatable {
 /// 动量积分的帧时钟（Phase 37）：CADisplayLink 逐帧回调 dt（秒，
 /// 首帧只记时刻、dt 钳 0.05 防切后台回来的大步）。只负责供时，
 /// 积分与状态写全在 LCGameHomeView 的 deckMomentumTick。stop 时
-/// 一并清 onTick，断开驱动器 → 闭包 → 视图状态的引用环。
+/// 一并清 onTick，断开驱动器 → 闭包 → 视图状态的引用环——但
+/// start 绝不能顺手清：调用方的契约是先赋 onTick 再 start，
+/// Phase 37 的 start 开头调 stop() 把刚赋值的回调当场抹掉、驱
+/// 动恒空转（#77 验收两缺陷的根因，Phase 38 复盘在
+/// startDeckMomentum 注释）。start 只废旧链、重置时刻。
 private final class LCDeckMomentumDriver: NSObject {
     private var displayLink: CADisplayLink?
     private var lastTimestamp: CFTimeInterval = 0
     var onTick: ((CGFloat) -> Void)?
 
     func start() {
-        stop()
+        displayLink?.invalidate()
+        displayLink = nil
         lastTimestamp = 0
         let link = CADisplayLink(target: self, selector: #selector(step(_:)))
         link.add(to: .main, forMode: .common)
