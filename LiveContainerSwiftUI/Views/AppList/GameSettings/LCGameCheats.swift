@@ -256,10 +256,22 @@ struct LCGameCheatsSectionView: View {
         let data: Data
     }
 
-    // 与 LCGameModsSectionView / LCGameSettingsView 的 LCNXColor 同值
-    private static let cream = Color(red: 1, green: 0.94, blue: 0.84)
-    private static let surface = Color(red: 0.10, green: 0.10, blue: 0.11)
-    private static let hairline = Color.white.opacity(0.08)
+    // 与 LCGameModsSectionView / LCGameSettingsView 的 LCNXColor 同值，深浅动态变体亦同
+    private static let cream = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 1, green: 0.94, blue: 0.84, alpha: 1)
+            : UIColor(red: 0.66, green: 0.47, blue: 0.16, alpha: 1)
+    })
+    private static let surface = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.10, green: 0.10, blue: 0.11, alpha: 1)
+            : UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+    })
+    private static let hairline = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.black.withAlphaComponent(0.08)
+    })
 
     var body: some View {
         // Group 透明包裹：无容器时整组缺席，与 Mod 组自隐同效
@@ -323,20 +335,20 @@ struct LCGameCheatsSectionView: View {
                 if files.isEmpty {
                     Text("lc.cheats.none".loc)
                         .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.72))
+                        .foregroundColor(.primary.opacity(0.72))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     ForEach(Array(files.enumerated()), id: \.element.id) { index, file in
                         if index > 0 {
                             Rectangle()
-                                .fill(Color.white.opacity(0.06))
+                                .fill(Color.primary.opacity(0.06))
                                 .frame(height: 1)
                         }
                         fileBlock(file)
                     }
                 }
                 Rectangle()
-                    .fill(Color.white.opacity(0.06))
+                    .fill(Color.primary.opacity(0.06))
                     .frame(height: 1)
                 Button {
                     picking = true
@@ -344,11 +356,11 @@ struct LCGameCheatsSectionView: View {
                     HStack(spacing: 8) {
                         Text("lc.cheats.import".loc)
                             .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(.white)
+                            .foregroundColor(.primary)
                         Spacer(minLength: 8)
                         Image(systemName: "chevron.right")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(.primary.opacity(0.4))
                     }
                     .frame(minHeight: 48)
                     .contentShape(Rectangle())
@@ -356,7 +368,7 @@ struct LCGameCheatsSectionView: View {
                 .buttonStyle(.plain)
                 Text("lc.cheats.note".loc)
                     .font(.system(size: 12.5))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.primary.opacity(0.5))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -382,15 +394,15 @@ struct LCGameCheatsSectionView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(file.buildID)
                                 .font(.system(size: 15, weight: .semibold).monospaced())
-                                .foregroundColor(.white)
+                                .foregroundColor(.primary)
                             Text("lc.cheats.entries".loc.localizeWithFormat(String(file.entries.count)))
                                 .font(.system(size: 12.5))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.primary.opacity(0.45))
                         }
                         Spacer(minLength: 8)
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(.primary.opacity(0.4))
                     }
                     .contentShape(Rectangle())
                 }
@@ -410,7 +422,7 @@ struct LCGameCheatsSectionView: View {
                     ForEach(Array(file.entries.enumerated()), id: \.element.id) { index, entry in
                         if index > 0 {
                             Rectangle()
-                                .fill(Color.white.opacity(0.05))
+                                .fill(Color.primary.opacity(0.05))
                                 .frame(height: 1)
                         }
                         entryRow(file: file, entry: entry)
@@ -426,13 +438,13 @@ struct LCGameCheatsSectionView: View {
         HStack(spacing: 10) {
             Text(entry.name)
                 .font(.system(size: 14))
-                .foregroundColor(.white.opacity(0.88))
+                .foregroundColor(.primary.opacity(0.88))
                 .lineLimit(2)
             Spacer(minLength: 8)
             if entry.isMaster {
                 Text("lc.cheats.alwaysOn".loc)
                     .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(.primary.opacity(0.4))
             } else {
                 Toggle("", isOn: entryBinding(file: file, entry: entry))
                     .labelsHidden()

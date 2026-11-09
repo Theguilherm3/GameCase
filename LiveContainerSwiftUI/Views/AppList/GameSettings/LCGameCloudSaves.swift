@@ -283,10 +283,22 @@ struct LCGameCloudSavesSectionView: View {
     @State private var resultTitle: String?
     @State private var resultMessage: String?
 
-    // 与 LCSaveDataSectionView / LCGameSettingsView 的 LCNXColor 同值
-    private static let cream = Color(red: 1, green: 0.94, blue: 0.84)
-    private static let surface = Color(red: 0.10, green: 0.10, blue: 0.11)
-    private static let hairline = Color.white.opacity(0.08)
+    // 与 LCSaveDataSectionView / LCGameSettingsView 的 LCNXColor 同值，深浅动态变体亦同
+    private static let cream = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 1, green: 0.94, blue: 0.84, alpha: 1)
+            : UIColor(red: 0.66, green: 0.47, blue: 0.16, alpha: 1)
+    })
+    private static let surface = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.10, green: 0.10, blue: 0.11, alpha: 1)
+            : UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+    })
+    private static let hairline = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.black.withAlphaComponent(0.08)
+    })
     private static let attention = Color(red: 1, green: 0.78, blue: 0.24)
 
     var body: some View {
@@ -332,7 +344,7 @@ struct LCGameCloudSavesSectionView: View {
                 rowWithActions
                 Text("lc.cloud.note".loc)
                     .font(.system(size: 12.5))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.primary.opacity(0.5))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -354,7 +366,7 @@ struct LCGameCloudSavesSectionView: View {
             Button {
                 picking = true
             } label: {
-                row(value: "lc.cloud.notPicked".loc, valueColor: .white.opacity(0.5))
+                row(value: "lc.cloud.notPicked".loc, valueColor: .primary.opacity(0.5))
             }
             .buttonStyle(.plain)
         case .on(let folderName):
@@ -379,7 +391,7 @@ struct LCGameCloudSavesSectionView: View {
                     reload()
                 }
             } label: {
-                row(value: "lc.cloud.off".loc, valueColor: .white.opacity(0.5), detail: folderName)
+                row(value: "lc.cloud.off".loc, valueColor: .primary.opacity(0.5), detail: folderName)
             }
         case .stale:
             Menu {
@@ -400,12 +412,12 @@ struct LCGameCloudSavesSectionView: View {
         HStack(spacing: 8) {
             Text("lc.cloud.folderRow".loc)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
             Spacer(minLength: 8)
             if let detail {
                 Text(detail)
                     .font(.system(size: 12.5))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.primary.opacity(0.5))
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -416,7 +428,7 @@ struct LCGameCloudSavesSectionView: View {
                 .truncationMode(.middle)
             Image(systemName: "chevron.right")
                 .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(.primary.opacity(0.4))
         }
         .frame(minHeight: 48)
         .contentShape(Rectangle())

@@ -237,10 +237,22 @@ struct LCSaveDataSectionView: View {
         let url: URL
     }
 
-    // 与 LCGameSettingsView 的 LCNXColor 同值（那组常量是其文件私有）
-    private static let cream = Color(red: 1, green: 0.94, blue: 0.84)
-    private static let surface = Color(red: 0.10, green: 0.10, blue: 0.11)
-    private static let hairline = Color.white.opacity(0.08)
+    // 与 LCGameSettingsView 的 LCNXColor 同值，深浅动态变体亦同（那组常量是其文件私有）
+    private static let cream = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 1, green: 0.94, blue: 0.84, alpha: 1)
+            : UIColor(red: 0.66, green: 0.47, blue: 0.16, alpha: 1)
+    })
+    private static let surface = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.10, green: 0.10, blue: 0.11, alpha: 1)
+            : UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+    })
+    private static let hairline = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.black.withAlphaComponent(0.08)
+    })
 
     var body: some View {
         if LCSaveDataStore.saveDirectoryURL(for: app) != nil {
@@ -297,7 +309,7 @@ struct LCSaveDataSectionView: View {
                 }
                 .buttonStyle(.plain)
                 Rectangle()
-                    .fill(Color.white.opacity(0.06))
+                    .fill(Color.primary.opacity(0.06))
                     .frame(height: 1)
                 Button {
                     picking = true
@@ -310,7 +322,7 @@ struct LCSaveDataSectionView: View {
                         ProgressView()
                         Text("lc.save.working".loc)
                             .font(.system(size: 12.5))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(.primary.opacity(0.5))
                     }
                 }
             }
@@ -331,7 +343,7 @@ struct LCSaveDataSectionView: View {
         HStack(spacing: 8) {
             Text(label)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
             Spacer(minLength: 8)
             if let value {
                 Text(value)
@@ -340,7 +352,7 @@ struct LCSaveDataSectionView: View {
             }
             Image(systemName: "chevron.right")
                 .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(.primary.opacity(0.4))
         }
         .frame(minHeight: 48)
         .contentShape(Rectangle())

@@ -726,7 +726,13 @@ struct LCGameSettingsView: View {
                     .foregroundColor(stateColor)
                     .lineLimit(1)
             }
-            ZStack(alignment: .bottomLeading) {
+            // 顶锚定是定版口径：隐藏「M\nM」恒预留两行高，标题若底
+            // 锚定，单行标题会落到第二行槽位、与状态行的间距凭空多
+            // 一行高（≈31），两行标题时又只剩 spacing——间距随行数
+            // 变（用户实测：哈迪斯单行偏大 / 以撒两行偏小）。改顶锚
+            // 定后标题首行恒贴预留块顶，间距恒为 VStack spacing 8
+            // （设计值）；预留块高不变，副行及其下位置关系不动。
+            ZStack(alignment: .topLeading) {
                 Text("M\nM")
                     .font(.system(size: 26, weight: .heavy))
                     .tracking(-0.6)
