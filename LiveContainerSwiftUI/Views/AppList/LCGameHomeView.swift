@@ -130,10 +130,9 @@ enum LCGameTheme {
 
     /// 密采样 stops 的共用入口（Phase 33）：锚点 → 单调三次密
     /// 采样 → 按 color 闭包逐点着色成 stops。主页 heroScrimStops
-    /// / heroFusionStops 与设置页 settingsScrimStops 同调本入
-    /// 口，采样逻辑全仓一份，不许各处复制近似实现。设置页页
-    /// 头融合层自 Phase 39 起直接复用 heroFusionStops 本人，
-    /// 不再自备曲线。
+    /// / heroFusionStops 与设置页 settingsScrimStops /
+    /// settingsBackdropMaskStops 同调本入口，采样逻辑全仓一份，
+    /// 不许各处复制近似实现。
     private static func denseSampledStops(
         anchors: [(x: Double, y: Double)],
         samples: Int,
@@ -171,23 +170,32 @@ enum LCGameTheme {
     /// 0.423–0.461 → 0.426–0.468、副行 loc 约 0.68 锚点 0.47
     /// 逐点不变——只平滑、不变弱；罩几何（532 / 下探 160、与
     /// 图同终点）逐字不动（Phase 30 定版）。
-    /// Phase 39：本罩自 coverHeader 单挂改为并入背景栈本体
-    /// （LCSettingsHeaderBackdrop 第 4 层），几何改随背景画布
-    /// 表达（顶 = topInset、高 = 画布高 − topInset），画布
-    /// 600 时与 Phase 30 的 532 / 下探 160 逐点一致；stops 本
-    /// 人逐字不动。
     static let settingsScrimStops: [Gradient.Stop] = denseSampledStops(
         anchors: coverScrimAnchors.map { (x: $0.location, y: $0.alpha) },
         samples: 17,
         zeroEndTangents: false
     ) { .black.opacity($0) }
 
-    /// （原设置页 backdrop 淡出 mask 的锚点 / stops 已于
-    /// Phase 39 退役：设置页底图收尾改走 hero 同款融合层
-    /// （heroFusionStops），mask 与其缓降段正是标题下平底深色
-    /// 带的成因之一，见 LCSettingsHeaderBackdrop 的 Phase 39
-    /// 注释。终点约束以等价形态保留：融合 f 在图最后一行像
-    /// 素处 = 1、合成精确到达页底色。）
+    /// 设置页页头 backdrop 淡出 mask 的锚点（NX 原规格）：loc
+    /// 0.45 前满显，其后衰减、loc 1 归零——loc 1 正落在图绘制
+    /// 的最后一行像素上（绘制总高 = 帧高 + topInset + 160，
+    /// Phase 28 / 30），终点位置是同终点结论的一部分、不许移。
+    static let settingsBackdropMaskAnchors: [(location: Double, alpha: Double)] = [
+        (0, 1), (0.45, 1), (0.68, 0.55), (0.85, 0.18), (1, 0),
+    ]
+
+    /// 设置页页头 backdrop 淡出 mask stops（Phase 33）：锚点同
+    /// 上，改走单调三次密采样 17 点、两端切线归零——离开满显
+    /// 平台与落到 clear 都无斜率突变。锚点逐点过：0 / 0.45 →
+    /// 1、0.68 → 0.55、0.85 → 0.18、1 → 0（终点逐字不变）；
+    /// 段内中点等效值 loc 0.565 处 0.775 → 0.834（离平台缓
+    /// 出）、0.765 处 0.365 → 0.357、0.925 处 0.090 → 0.058
+    /// （贴地缓收），衰减段全程单调、无过冲。
+    static let settingsBackdropMaskStops: [Gradient.Stop] = denseSampledStops(
+        anchors: settingsBackdropMaskAnchors.map { (x: $0.location, y: $0.alpha) },
+        samples: 17,
+        zeroEndTangents: true
+    ) { .black.opacity($0) }
 
     /// 设置页页头状态栏 scrim 的锚点（NX 原规格）：黑 0.5 起、
     /// 落到 0。原构造是这两点的一条两段线性渐变（LinearGradient
@@ -269,8 +277,6 @@ enum LCGameTheme {
     /// 续。偏离只在 u<0.453 的图像主导段（最大约 −0.067，坡度
     /// 渐入）与 u>0.861 的收尾段（约 +0.013）。深色模式共用此
     /// 层：本轮对深色只换 stops 曲线，端点 / 中点 / 形态不动。
-    /// Phase 39：设置页页头融合层字面复用本 stops（带 = 其背
-    /// 景画布底部 45%），本 stops 与 heroBlendColor 逐字不动。
     static let heroFusionStops: [Gradient.Stop] = denseSampledStops(
         anchors: [(0, 0), (0.453, 0.453), (0.657, 0.657), (0.861, 0.861), (1, 1)],
         samples: 13,
