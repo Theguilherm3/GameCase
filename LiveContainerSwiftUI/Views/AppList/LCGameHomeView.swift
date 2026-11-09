@@ -1737,6 +1737,13 @@ struct LCGameHomeView: View {
                         .frame(height: 56)
                         .frame(maxWidth: .infinity)
                         .gcStartButtonBackground()
+                        // 命中区 = 整颗可见胶囊：label 无 contentShape 时
+                        // 命中回落到 HStack 内容本身（图标 + 文字），玻璃
+                        // 分支下胶囊面又是 glassEffect 渲染层而非实体视图，
+                        // 点胶囊空白处无反应（用户实报只有「开始」文字块
+                        // 能点）。胶囊形与两分支的胶囊底同帧内切、逐点
+                        // 一致——只定命中区，不大不小，外观零变化。
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     // 手柄焦点表现：手柄连着时开始钮整体放大 1.03 +
