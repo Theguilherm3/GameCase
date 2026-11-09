@@ -501,10 +501,22 @@ struct LCGameModsSectionView: View {
     private final class CancelBox { var cancelled = false }
     @State private var cancelBox = CancelBox()
 
-    // 与 LCSaveDataSectionView / LCGameSettingsView 的 LCNXColor 同值
-    private static let cream = Color(red: 1, green: 0.94, blue: 0.84)
-    private static let surface = Color(red: 0.10, green: 0.10, blue: 0.11)
-    private static let hairline = Color.white.opacity(0.08)
+    // 与 LCSaveDataSectionView / LCGameSettingsView 的 LCNXColor 同值，深浅动态变体亦同
+    private static let cream = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 1, green: 0.94, blue: 0.84, alpha: 1)
+            : UIColor(red: 0.66, green: 0.47, blue: 0.16, alpha: 1)
+    })
+    private static let surface = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.10, green: 0.10, blue: 0.11, alpha: 1)
+            : UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+    })
+    private static let hairline = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.black.withAlphaComponent(0.08)
+    })
 
     var body: some View {
         // Group 透明包裹：无容器时条件为空，整组在宿主 VStack 里缺席
@@ -573,20 +585,20 @@ struct LCGameModsSectionView: View {
                     if entries.isEmpty {
                         Text("lc.mods.none".loc)
                             .font(.system(size: 14))
-                            .foregroundColor(.white.opacity(0.72))
+                            .foregroundColor(.primary.opacity(0.72))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                             if index > 0 {
                                 Rectangle()
-                                    .fill(Color.white.opacity(0.06))
+                                    .fill(Color.primary.opacity(0.06))
                                     .frame(height: 1)
                             }
                             modRow(entry, at: index)
                         }
                     }
                     Rectangle()
-                        .fill(Color.white.opacity(0.06))
+                        .fill(Color.primary.opacity(0.06))
                         .frame(height: 1)
                     Button {
                         picking = true
@@ -594,11 +606,11 @@ struct LCGameModsSectionView: View {
                         HStack(spacing: 8) {
                             Text("lc.mods.import".loc)
                                 .font(.system(size: 15, weight: .medium))
-                                .foregroundColor(.white)
+                                .foregroundColor(.primary)
                             Spacer(minLength: 8)
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(.white.opacity(0.4))
+                                .foregroundColor(.primary.opacity(0.4))
                         }
                         .frame(minHeight: 48)
                         .contentShape(Rectangle())
@@ -613,7 +625,7 @@ struct LCGameModsSectionView: View {
                         HStack(spacing: 8) {
                             Text("lc.mods.importing".loc)
                                 .font(.system(size: 12.5))
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(.primary.opacity(0.5))
                             Spacer(minLength: 0)
                             Button("lc.common.cancel".loc) {
                                 cancelBox.cancelled = true
@@ -625,7 +637,7 @@ struct LCGameModsSectionView: View {
                 }
                 Text("lc.mods.note".loc)
                     .font(.system(size: 12.5))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.primary.opacity(0.5))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -645,11 +657,11 @@ struct LCGameModsSectionView: View {
             HStack(spacing: 10) {
                 Text(positionText(for: entry))
                     .font(.system(size: 14.5, weight: .semibold))
-                    .foregroundColor(entry.isEffective ? Self.cream : .white.opacity(0.35))
+                    .foregroundColor(entry.isEffective ? Self.cream : .primary.opacity(0.35))
                     .frame(minWidth: 18, alignment: .leading)
                 Text(entry.name)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(entry.isEnabled ? .white : .white.opacity(0.45))
+                    .foregroundColor(entry.isEnabled ? .primary : .primary.opacity(0.45))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
@@ -682,11 +694,11 @@ struct LCGameModsSectionView: View {
                 if !entry.isEnabled {
                     Text("lc.mods.disabledState".loc)
                         .font(.system(size: 12.5))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.primary.opacity(0.4))
                 } else if entry.romfsPath == nil {
                     Text("lc.mods.ineffectiveState".loc)
                         .font(.system(size: 12.5))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.primary.opacity(0.4))
                 }
             }
             .padding(.leading, 28)
@@ -698,7 +710,7 @@ struct LCGameModsSectionView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.white.opacity(disabled ? 0.18 : 0.75))
+                .foregroundColor(.primary.opacity(disabled ? 0.18 : 0.75))
                 .frame(width: 30, height: 30)
                 .contentShape(Rectangle())
         }

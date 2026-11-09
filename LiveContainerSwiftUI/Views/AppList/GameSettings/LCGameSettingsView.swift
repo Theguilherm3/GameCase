@@ -75,6 +75,15 @@ private enum LCNXColor {
     /// 奶油色静态版（= cream 的深色值）：只给压在封面头图 / 晕染上的
     /// 文字用（headerWords 的分组小题），那种底不随外观翻
     static let creamOnDark = Color(red: 1, green: 0.94, blue: 0.84)
+    /// 分段控件选中块专用填充（用户看预览拍板 P4）：深色 = cream
+    /// 深色值逐字（与现行选中块同色）；浅色改纯白（另配 hairline
+    /// 描边 + 轻阴影，见 LCChoiceRow.segmentedBar）。与 cream 分开
+    /// 定义：cream 还被别处文字强调在用，不连动。
+    static let segmentChosenFill = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 1, green: 0.94, blue: 0.84, alpha: 1)
+            : UIColor.white
+    })
     static let ready = Color(red: 0.25, green: 0.84, blue: 0.47)
     static let attention = Color(red: 1, green: 0.78, blue: 0.24)
     /// 已损坏（状态机三态新增，与 LCGameTheme.brokenRed / 主页同值）
@@ -202,6 +211,7 @@ private struct LCChoiceRow: View {
     let locked: Bool
     var onPick: (String) -> Void
     @State private var rowWidth: CGFloat = 0
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Group {
@@ -267,8 +277,9 @@ private struct LCChoiceRow: View {
     }
 
     /// NX SegmentedChoice：轨道 padding 3、白 0.055、圆角 11、白 0.08
-    /// 描边；段间距 2 等宽，字 13.5（选中 bold 黑字奶油底圆角 8，
-    /// 未选 medium 白 0.75），段 minHeight 40、横向内距 14。
+    /// 描边；段间距 2 等宽，字 13.5（选中 bold 黑字、圆角 8 填充：
+    /// 深色奶油底、浅色系统白 + 描边 + 轻阴影（P4）；未选 medium
+    /// 白 0.75），段 minHeight 40、横向内距 14。
     /// 等宽用 HStack + maxWidth .infinity（NX 的 EqualRow 是 iOS 16
     /// Layout 协议，部署目标 iOS 15 不可用，报告注明）。
     private var segmentedBar: some View {
@@ -284,8 +295,23 @@ private struct LCChoiceRow: View {
                         .padding(.horizontal, 14)
                         .frame(maxWidth: .infinity, minHeight: 40)
                         .foregroundColor(chosen ? .black : .primary.opacity(0.75))
-                        .background(chosen ? LCNXColor.cream : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 8))
+                        .background {
+                            // 选中块（P4）：深色奶油填充逐字不变；
+                            // 浅色改系统白填充（segmentChosenFill）+
+                            // hairline 细描边 + 系统式轻阴影
+                            if chosen {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(LCNXColor.segmentChosenFill)
+                                    .overlay {
+                                        if colorScheme == .light {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .strokeBorder(LCNXColor.hairline, lineWidth: 1)
+                                        }
+                                    }
+                                    .shadow(color: colorScheme == .light ? Color.black.opacity(0.08) : .clear,
+                                            radius: 4, y: 1)
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
             }
@@ -333,6 +359,7 @@ struct LCGameSettingsView: View {
     /// 页内子页推进），与原来一致。
     var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     @AppStorage("darkModeIcon", store: LCUtils.appGroupUserDefault) private var darkModeIcon = false
 
@@ -594,6 +621,28 @@ struct LCGameSettingsView: View {
                 .padding(.top, bannerHeight - (hasBanner ? 22 : 0))
         }
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
+        .background(alignment: .bottom) {
+            // 浅色专用深罩（用户看预览拍板 P1，与主页 hero 同法）：
+            // 本背景层在封面 backdrop 之上、信息簇之下。backdrop 的
+            // mask 在标题带已衰减到约半透明,浅色下页底透出把白标题
+            // 与副行洗没;此罩不走 mask,峰值(黑 0.46)对准大标题、
+            // 副行处仍有 0.40,罩底探出头帧下缘 22pt 后收零,不留
+            // 硬界。副行(「游戏设置 · 版本」)就在罩的覆盖内、且其
+            // 前景本就是压图语义(creamOnDark / 白 0.5),随罩解决、
+            // 不改语义色。深色模式不加、逐字保持现状。
+            if colorScheme == .light {
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black.opacity(0.30), location: 0.40),
+                    .init(color: .black.opacity(0.46), location: 0.58),
+                    .init(color: .black.opacity(0.40), location: 0.86),
+                    .init(color: .clear, location: 1),
+                ], startPoint: .top, endPoint: .bottom)
+                .frame(height: 234)
+                .offset(y: 22)
+                .allowsHitTesting(false)
+            }
+        }
         .background {
             // 背景层显式上移 topInset 到物理顶（布局帧不动）：绘制
             // 总高经 extraTop 同步加 topInset，图像映射与 NX 一致；
@@ -677,7 +726,13 @@ struct LCGameSettingsView: View {
                     .foregroundColor(stateColor)
                     .lineLimit(1)
             }
-            ZStack(alignment: .bottomLeading) {
+            // 顶锚定是定版口径：隐藏「M\nM」恒预留两行高，标题若底
+            // 锚定，单行标题会落到第二行槽位、与状态行的间距凭空多
+            // 一行高（≈31），两行标题时又只剩 spacing——间距随行数
+            // 变（用户实测：哈迪斯单行偏大 / 以撒两行偏小）。改顶锚
+            // 定后标题首行恒贴预留块顶，间距恒为 VStack spacing 8
+            // （设计值）；预留块高不变，副行及其下位置关系不动。
+            ZStack(alignment: .topLeading) {
                 Text("M\nM")
                     .font(.system(size: 26, weight: .heavy))
                     .tracking(-0.6)
