@@ -132,7 +132,7 @@ struct LCPadLayoutEditorView: View {
                         .font(.footnote.bold())
                     Text("游戏设置")
                 }
-                .foregroundColor(LCGameTheme.creamColor)
+                .foregroundColor(LCGameTheme.creamOnDark)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
                 .background(Color.black.opacity(0.55))
@@ -141,7 +141,7 @@ struct LCPadLayoutEditorView: View {
             }
             Text("\(game.displayName) · 按键布局（仅战斗页）")
                 .font(.headline)
-                .foregroundColor(LCGameTheme.creamColor)
+                .foregroundColor(LCGameTheme.creamOnDark)
             Spacer()
         }
     }
@@ -339,7 +339,7 @@ struct LCPadLayoutEditorView: View {
             HStack {
                 Text("按键布局")
                     .font(.title3.bold())
-                    .foregroundColor(LCGameTheme.creamColor)
+                    .foregroundColor(LCGameTheme.creamOnDark)
                 Spacer()
                 Button {
                     presentationMode.wrappedValue.dismiss()
@@ -434,7 +434,7 @@ struct LCPadLayoutEditorView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.white.opacity(0.2), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .foregroundColor(LCGameTheme.creamColor)
+        .foregroundColor(LCGameTheme.creamOnDark)
         .disabled(selected == nil)
     }
 
@@ -448,7 +448,7 @@ struct LCPadLayoutEditorView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.white.opacity(0.2), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .foregroundColor(LCGameTheme.creamColor)
+        .foregroundColor(LCGameTheme.creamOnDark)
         .disabled(selected == nil)
     }
 
