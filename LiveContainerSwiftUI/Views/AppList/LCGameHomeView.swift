@@ -240,21 +240,21 @@ struct LCGameHomeView: View {
     // 「最近游玩」区是分组第 0 组（玩过的游戏）的独立呈现，仍走
     // recentApps，不受本快照影响；聚焦与 hero 也不读顺序。
     // carouselOffset 是 >3 张时手势轮播的滚动量（点），静止时恒
-    // 等于聚焦序号 × stride。
+    // 等于聚焦序号 × stride。carouselDragLogicalOffset 是拖动中的
+    // 未钳制逻辑偏移（手指原始位移换算）：显示偏移在两端橡皮筋化，
+    // 落点投影按逻辑偏移算，两者只在越界拖动时不同。
     @State private var libraryOrderKeys: [String] = []
     @State private var carouselOffset: CGFloat = 0
     @State private var carouselDragStartOffset: CGFloat = 0
-    @State private var carouselGestureStart = 0
+    @State private var carouselDragLogicalOffset: CGFloat = 0
     @State private var carouselDragging = false
     @State private var carouselSettled = true
     @State private var carouselScrollEpoch = 0
-    // 横屏牌组点击裁决（Phase 16）：手势开始时的聚焦位快照、本次点按的
-    // 消费标记、以及「当前触摸序列是否已写过快照」——见 deckTap 注释。
-    // shelf 没有 carousel 的 settled 机制，用最近一次牌组切换的时刻判
-    // 停稳（deckLastSwitchAt，由 setFocusFromDeck 记录）。
-    @State private var deckTapStartFocus: Int? = nil
-    @State private var deckTapConsumed = false
-    @State private var deckTouchActive = false
+    // 横屏牌组点击裁决（Phase 27）：上次裁决时刻（同一触摸被重复投递
+    // 时的时间窗去重）与最近一次牌组切换时刻（shelf 没有 carousel 的
+    // settled 机制，用它判停稳，deckLastSwitchAt 由 setFocusFromDeck
+    // 记录）——见 deckTap 注释。
+    @State private var deckTapAdjudicatedAt: Date = .distantPast
     @State private var deckLastSwitchAt: Date = .distantPast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -345,20 +345,28 @@ struct LCGameHomeView: View {
         }
     }
 
-    /// NX CardSnap 的落点规则（一手势最多一张）：target 是手势放开后按
-    /// 惯性会停的偏移，velocity 是朝后一张卡方向的速度（pt/ms），
-    /// 超过 0.3 算甩动，落点钳在手势起始卡的相邻一张内；否则落最近卡。
-    private static func cardSnap(target: CGFloat, velocity: CGFloat, stride: CGFloat, count: Int, start: Int) -> Int {
-        let nearest = Int((target / stride).rounded())
-        let card: Int
-        if velocity > 0.3 {
-            card = max(start + 1, min(nearest, start + 1))
-        } else if velocity < -0.3 {
-            card = min(start - 1, max(nearest, start - 1))
-        } else {
-            card = nearest
-        }
+    /// 牌组落点规则（Phase 27，取代 NX CardSnap 的一手势一卡钳制）：
+    /// 落点 = 逻辑偏移 + 速度投影后最近的卡。velocity 是朝后一张卡
+    /// 方向的速度（pt/ms），投影时长 220ms：慢拖时速度近零、落最近
+    /// 卡（不足半张回原位）；快甩时投影把落点推过多张、一次滑多卡。
+    /// 只钳列表两端，不再钳手势起始卡的邻位。
+    private static func cardSnap(logicalOffset: CGFloat, velocity: CGFloat, stride: CGFloat, count: Int) -> Int {
+        let projected = logicalOffset + velocity * 220
+        let card = Int((projected / stride).rounded())
         return min(count - 1, max(0, card))
+    }
+
+    /// 牌组停稳动画（Phase 27）：与 deckAnimation 同一曲线，时长按
+    /// 行程（以 stride 计）放大——一卡内仍是 0.3 的原手感，远行程至
+    /// 多 0.55，避免多卡跳变套一卡时长显得硬切。减弱动态时按
+    /// deckAnimation 同口径降为 0.2 线性。
+    private func deckSettleAnimation(distance: CGFloat, stride: CGFloat) -> Animation {
+        if reduceMotion {
+            return .linear(duration: 0.2)
+        }
+        let strides = stride > 0 ? Double(abs(distance) / stride) : 0
+        let duration = min(0.55, 0.3 + 0.09 * max(0, strides - 1))
+        return .timingCurve(0.22, 0.61, 0.36, 1, duration: duration)
     }
 
     /// 游戏状态求值（主页全部状态呈现的单一入口）：读 refreshToken
@@ -1379,7 +1387,6 @@ struct LCGameHomeView: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .contentShape(Rectangle())
-            .simultaneousGesture(deckTouchWatcher(list: list))
             .simultaneousGesture(
                 DragGesture(minimumDistance: 24)
                     .onEnded { value in
@@ -1448,7 +1455,6 @@ struct LCGameHomeView: View {
         .frame(width: w, height: areaH)
         .contentShape(Rectangle())
         .gesture(carouselDrag(list: list, stride: stride))
-        .simultaneousGesture(deckTouchWatcher(list: list))
         .onAppear {
             carouselOffset = CGFloat(focusIdx) * stride
         }
@@ -1460,23 +1466,6 @@ struct LCGameHomeView: View {
         }
     }
 
-    /// 触摸观察手势（Phase 16）：与牌组自身的滑动 / 点击同时识别，
-    /// 只在每次触摸序列落下时写一次「手势开始时的聚焦位」快照并复位
-    /// 消费标记。裁决只认这张快照，不认裁决时（可能已被切换动画或
-    /// asyncAfter 改过的）当前聚焦。
-    private func deckTouchWatcher(list: [LCAppModel]) -> some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { _ in
-                guard !deckTouchActive else { return }
-                deckTouchActive = true
-                deckTapConsumed = false
-                deckTapStartFocus = landscapeFocusIndex(in: list)
-            }
-            .onEnded { _ in
-                deckTouchActive = false
-            }
-    }
-
     /// shelf 的停稳判定：距上次牌组切换 ≥ 切换动画时长（0.3）+ 余量，
     /// 与 carousel 的 0.32 口径对齐（reduceMotion 时动画 0.2，同一
     /// 阈值仍成立）。
@@ -1484,25 +1473,38 @@ struct LCGameHomeView: View {
         Date().timeIntervalSince(deckLastSwitchAt) >= 0.32
     }
 
-    /// 横屏牌组点击的唯一裁决点（Phase 16，NX 三条逻辑的结构性强制）：
+    /// 横屏牌组点击的唯一裁决点（Phase 27，取代 Phase 16 的快照裁决）：
     /// 滑动切换走既有手势、不经此；点后面的封面只切换；只有点已经
-    /// 停稳在前面的封面才启动。旧实现的两条漏路：① shelf 的
-    /// onTapGesture 闭包捕获的是渲染时算好的 isChosen，裁决数据与
-    /// 裁决时刻脱钩——切换动画途中视图再渲染，闭包会带着新聚焦位
-    /// 重入，手指落下时还是后面的卡、识别完成时已被判成前面的卡；
-    /// ② carousel 的 carouselTap 在裁决时现读聚焦位，邻卡路径又在
-    /// 同一手势里当场改聚焦、settled 0.32s 后由 asyncAfter 翻回，
-    /// 未停稳窗口里的后续识别能赶上新聚焦位 + settled 而误启动。
-    /// 本裁决在触摸落下时冻结聚焦位（deckTouchWatcher 的快照），
-    /// 点击结束时只裁决一次并消费：被点卡 ≠ 开始时聚焦卡 → 只执行
-    /// focusAction（切换），同一次点按绝不二次裁决；被点卡 = 开始时
-    /// 聚焦卡且已停稳 → 启动。快照缺失（观察手势未及写下）时退回
-    /// 现读聚焦位，仅该一次点按回到旧口径。
+    /// 停稳在前面的封面才启动。
+    ///
+    /// Phase 16 的裁决读「手势开始时的聚焦位快照」：快照由一个与点击
+    /// 同时识别的 DragGesture(minimumDistance: 0)（deckTouchWatcher）
+    /// 在 onChanged 里写，而纯点按（落下即抬起、几乎无位移）时该回调
+    /// 不保证赶在点击识别完成之前——观察手势漏写时，本次点按拿的是
+    /// 上一触摸序列留下的旧快照裁决（快照从不失效、序列结束也不清；
+    /// 旧注释写的「快照缺失时退回现读」只在全程第一次点按成立）。
+    /// 旧值恰等于被点卡的典型路径：先前聚焦在该卡上、从它滑走（滑
+    /// 动开始时快照 = 该卡），牌组停稳（settled 已翻 true）后再点它
+    /// 想切回来——idx 与旧快照相等 → 误入启动分支。偶发与否取决于
+    /// 两个手势识别器的回调次序，与实测「大多数时候先切换、偶发直
+    /// 接启动」吻合；同一观察手势还独占消费标记的复位，漏写时下一
+    /// 次点按会被整口吞掉（点了没反应）。
+    ///
+    /// 本裁决不再依赖任何快照，判定流程可自证：一次点按内，能改聚
+    /// 焦的写入口只有拖动落点提交（点按不构成拖动，不会触发）与另
+    /// 一次点按的 focusAction（在本裁决内、裁决之后执行），故裁决时
+    /// 现读的聚焦位恒等于触摸开始时的聚焦位——「点未聚焦卡」在结
+    /// 构上不可能进入启动分支，与手势识别次序无关。被点卡 = 现聚焦
+    /// 卡时再叠停稳门（入参 isSettled，裁决时现读）。同一触摸被多
+    /// 个识别器重复投递的防御改用时间窗：0.4s 内只裁决一次（同触
+    /// 摸的重复识别相隔仅数毫秒；此窗与停稳窗同量级，窗内连点本
+    /// 就被 settled 拦在启动之外，吞掉不改变结果）。
     private func deckTap(app: LCAppModel, index idx: Int, list: [LCAppModel], isSettled: Bool, focusAction: () -> Void) {
-        guard !deckTapConsumed else { return }
-        deckTapConsumed = true
-        let startFocus = deckTapStartFocus ?? landscapeFocusIndex(in: list)
-        if idx != startFocus {
+        if Date().timeIntervalSince(deckTapAdjudicatedAt) < 0.4 {
+            return
+        }
+        deckTapAdjudicatedAt = Date()
+        if idx != landscapeFocusIndex(in: list) {
             focusAction()
         } else if isSettled {
             onRun(app)
@@ -1510,12 +1512,13 @@ struct LCGameHomeView: View {
     }
 
     /// 点邻卡只居中、点已聚焦卡在轮播停稳时才启动——裁决统一走
-    /// deckTap（手势开始时的聚焦位 + 一次消费），此处只提供 carousel
-    /// 的切换动作（滚动到该卡 + 落聚焦 + settled 计时）。
+    /// deckTap（裁决时现读聚焦位 + 时间窗去重），此处只提供 carousel
+    /// 的切换动作（滚动到该卡 + 落聚焦 + settled 计时；滚动动画按
+    /// 行程取时长，见 deckSettleAnimation）。
     private func carouselTap(app: LCAppModel, index idx: Int, list: [LCAppModel], stride: CGFloat) {
         deckTap(app: app, index: idx, list: list, isSettled: carouselSettled && !carouselDragging) {
             beginCarouselScroll()
-            withAnimation(deckAnimation) {
+            withAnimation(deckSettleAnimation(distance: CGFloat(idx) * stride - carouselOffset, stride: stride)) {
                 carouselOffset = CGFloat(idx) * stride
             }
             setFocusFromDeck(app)
@@ -1529,42 +1532,54 @@ struct LCGameHomeView: View {
                 if !carouselDragging {
                     carouselDragging = true
                     carouselDragStartOffset = carouselOffset
-                    carouselGestureStart = min(list.count - 1, max(0, Int((carouselOffset / stride).rounded())))
                     beginCarouselScroll()
                 }
-                carouselOffset = min(
-                    CGFloat(list.count - 1) * stride,
-                    max(0, carouselDragStartOffset - value.translation.width)
-                )
+                // Phase 27：逻辑偏移 = 手指原始位移的无钳制换算，落点
+                // 投影按它算；显示偏移全程 1:1 跟随逻辑偏移、只在两端
+                // 橡皮筋化（越界部分 ×0.35），不再硬停在边界。
+                let logical = carouselDragStartOffset - value.translation.width
+                carouselDragLogicalOffset = logical
+                let maxOffset = CGFloat(list.count - 1) * stride
+                if logical < 0 {
+                    carouselOffset = logical * 0.35
+                } else if logical > maxOffset {
+                    carouselOffset = maxOffset + (logical - maxOffset) * 0.35
+                } else {
+                    carouselOffset = logical
+                }
+                // Phase 27：焦点跟随最近卡——逻辑偏移过相邻中点即提
+                // 交（取代 Phase 23 的「拖动中不提交」：连续滚动下标题 /
+                // 信息区要跟着走）。setFocusFromDeck 只写 focusKey；
+                // syncCarouselOffset 在拖动中被 carouselDragging 守卫
+                // 挡下、不反抢偏移；背景 / 名牌的淡化由信息区自己的
+                // 动画承接，逐步换不闪。
+                let nearest = min(list.count - 1, max(0, Int((logical / stride).rounded())))
+                if nearest != landscapeFocusIndex(in: list) {
+                    setFocusFromDeck(list[nearest])
+                }
             }
             .onEnded { value in
                 carouselDragging = false
-                // NX CardSnap 的入参：target = 惯性预测落点的偏移，
-                // velocity 换成朝后一张卡为正的 pt/ms
-                let target = carouselDragStartOffset - value.predictedEndTranslation.width
+                // Phase 27 落点：逻辑偏移 + 速度投影（velocity 换成朝
+                // 后一张卡为正的 pt/ms，投影时长 220ms，公式见
+                // cardSnap）——快甩可越过多张、慢拖落最近卡，不再有
+                // NX CardSnap 的一卡钳制。停稳时长按行程放大（见
+                // deckSettleAnimation）。落点卡的聚焦在这一帧补正提
+                // 交（拖动中已跟随到最近卡，落点因速度投影更远时在
+                // 此对齐；Phase 23 的「背景 / 名牌淡化与吸附动画同帧
+                // 起跑」时序不变）。settled 仍由 finishCarouselScroll
+                // 在 +0.32 翻（与点邻卡 / 外部同步同一机制），
+                // Phase 27 的点击裁决口径不动。
                 let velocity = -value.velocity.width / 1000
                 let card = Self.cardSnap(
-                    target: target,
+                    logicalOffset: carouselDragLogicalOffset,
                     velocity: velocity,
                     stride: stride,
-                    count: list.count,
-                    start: carouselGestureStart
+                    count: list.count
                 )
-                withAnimation(deckAnimation) {
+                withAnimation(deckSettleAnimation(distance: CGFloat(card) * stride - carouselOffset, stride: stride)) {
                     carouselOffset = CGFloat(card) * stride
                 }
-                // Phase 23：落点一决定（手势结束 / 吸附开始这一帧）就
-                // 提交聚焦——背景 0.45 淡化与名牌 0.2 淡化由此与吸附
-                // 动画同时起跑。旧实现把提交压在吸附之后：asyncAfter
-                // (+0.32) 才落聚焦，三层串行，卡停稳后名牌还要再等
-                // 0.32 才开始换、背景 0.32+0.45 才换完（录屏实测背景 /
-                // 标题慢约半秒跟上）。NX 的选择虽生于滚动 idle，但其
-                // 滚动自带减速段、提交与停稳同帧，淡化在停稳帧起跑；
-                // 本手势移植以「落点提交」为闸达成同一观感时序。拖拽
-                // 进行中（onChanged）不提交——未决定落点的滑动不换
-                // 背景 / 名牌，防闪烁原意不变。settled 不在此翻：仍由
-                // finishCarouselScroll 在 +0.32 翻（与点邻卡 / 外部同步
-                // 同一机制），Phase 16 的点击裁决口径不动。
                 if list.indices.contains(card) {
                     setFocusFromDeck(list[card])
                 }
@@ -1583,7 +1598,7 @@ struct LCGameHomeView: View {
             return
         }
         beginCarouselScroll()
-        withAnimation(deckAnimation) {
+        withAnimation(deckSettleAnimation(distance: target - carouselOffset, stride: stride)) {
             carouselOffset = target
         }
         finishCarouselScroll(epoch: carouselScrollEpoch)
