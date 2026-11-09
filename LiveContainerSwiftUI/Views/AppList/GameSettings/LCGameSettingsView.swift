@@ -628,9 +628,10 @@ struct LCGameSettingsView: View {
             // 此罩不走 mask。副行（「游戏设置 · 版本」）就在罩的覆
             // 盖内、且其前景本就是压图语义（creamOnDark / 白 0.5），
             // 随罩解决、不改语义色。深色模式不加、逐字保持现状。
-            // stops 与几何：stops 与主页 hero 同锚点同采样
-            // （Phase 33 起改走 LCGameTheme.settingsScrimStops
-            // 密采样版，见主题注释）。几何经两轮修订：
+            // stops 与几何：stops 走 LCGameTheme.settingsScrimStops
+            // 密采样版（Phase 33 起；Phase 40 起改用设置页自有
+            // 锚点 settingsScrimAnchors——与 hero 分家的原因与新
+            // 形见主题注释，采样入口仍同一）。几何经两轮修订：
             // #69 把罩高拉到 500、下探 128 拉长尾巴，台阶减轻但
             // 仍在（用户复验）——根因是罩与图的终点不一致：罩在
             // 帧下缘 +128 处收零，而封面图（backdrop 向下溢出
@@ -645,6 +646,9 @@ struct LCGameSettingsView: View {
             // 换算下标题块（帧下缘上 26–88pt）落在 loc 0.53–0.65
             // （约 0.43–0.47，#69 为 0.43–0.45）、副行（约 8pt）
             // loc 约 0.68（约 0.47，#69 为 0.39，只强不弱）。
+            // Phase 40：罩锚点改自有平顶形（0.52–0.69 恒 0.52），
+            // 上述标题块 / 副行取值升为约 0.51–0.52 / 0.52，仍只
+            // 强不弱（断层成因与对照见主题注释）。
             // Phase 33（设置页同步主页 Phase 32 的平滑口径，用户
             // 在 S2Arm 兜底图页头实测台阶后令同步处理）：罩 stops
             // 改走 settingsScrimStops（同锚点单调三次密采样 17
@@ -1354,14 +1358,16 @@ private struct LCSettingsHeaderBackdrop: View {
 
 /// NX PaneBanner.background 移植：底图按头部实高 +160 绘制（向下
 /// 溢出垫进内容区）、整体罩 NX 的渐隐 mask。有横图：原图 +
-/// 压暗渐变（clear@0.3 → 黑 0.4@0.6 → 黑 0.55@1，Phase 35 起
-/// stops 改走 LCGameTheme.settingsBannerShadeStops 密采样、
-/// 锚点逐点不变）；无横图：图标自体放大 1.4 + blur 40 +
+/// 压暗渐变（clear@0.3 → 黑 0.45@0.48 → 黑 0.50@0.70 → 黑
+/// 0.55@1，Phase 35 起 stops 改走 LCGameTheme.
+/// settingsBannerShadeStops 密采样、Phase 40 锚点前移见主题
+/// 注释）；无横图：图标自体放大 1.4 + blur 40 +
 /// saturation 1.2 + 黑 0.38 叠加。
-/// mask stops：锚点黑@0 / 黑@0.45 / 黑 0.55@0.68 / 黑 0.18@0.85
+/// mask stops：锚点黑@0 / 黑@0.45 / 黑 0.55@0.66 / 黑 0.13@0.85
 /// / clear@1，Phase 33 起按同锚点单调三次密采样作 stops（见
 /// LCGameTheme.settingsBackdropMaskStops：锚点逐点过、终点
-/// loc 1 归零逐字不变、段内平滑进出）。
+/// loc 1 归零逐字不变、段内平滑进出；Phase 40 中 / 尾锚微
+/// 调见主题注释）。
 /// 状态栏 scrim（Phase 26 补回，NX 原规格）：叠在图层之上、mask
 /// 之内，topInset > 0 时黑 0.5 → clear、高 topInset + 50，锚在
 /// 图顶（背景帧已出血到物理顶）——亮封面下状态栏的时钟与电量
