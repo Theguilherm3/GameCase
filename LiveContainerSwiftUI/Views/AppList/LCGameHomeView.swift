@@ -11,6 +11,7 @@
 
 import SwiftUI
 import GameController
+import QuartzCore
 
 // MARK: - 游戏库配色（自旧 LCGameCardView 抽出的共享常量，设置页 / 导入页也在用）
 
@@ -574,6 +575,13 @@ struct LCGameHomeView: View {
     @State private var carouselDragging = false
     @State private var carouselSettled = true
     @State private var carouselScrollEpoch = 0
+    // Cover Flow 式自由动量（Phase 37）：高速多卡松手后不预定目标，
+    // 由 LCDeckMomentumDriver 逐帧把摩擦衰减积分直接写进偏移状态；
+    // 速度是卡/s、随积分逐帧衰减。滚动中抓停 / 点卡 / 外部落位都先
+    // 停驱动，见 stopDeckMomentum。
+    @State private var carouselMomentumActive = false
+    @State private var deckMomentumVelocity: CGFloat = 0
+    @State private var deckMomentumDriver = LCDeckMomentumDriver()
     // 横屏牌组点击裁决（Phase 27）：上次裁决时刻（同一触摸被重复投递
     // 时的时间窗去重）与最近一次牌组切换时刻（shelf 没有 carousel 的
     // settled 机制，用它判停稳，deckLastSwitchAt 由 setFocusFromDeck
@@ -829,6 +837,12 @@ struct LCGameHomeView: View {
     /// Phase 31：入参随偏移改卡位单位。相对初速是「速度 ÷ 行程」
     /// 的无量纲比，单位换算中不变；定时曲线的行程阈值（>1 卡）与
     /// 时长公式同为卡位口径，与旧点值版（÷stride 后）数值逐项相等。
+    ///
+    /// Phase 37：高速多卡松手的发布段改走 Cover Flow 式自由动量
+    /// （startDeckMomentum），不再经本函数的多卡匀速分支；该分支
+    /// 自此只服务低速松手（投影行程 > 1 卡但 |初速| 未过动量阈
+    /// 值）一路径，点卡 / 外部同步 / 动量末段吸附（均不传速度、
+    /// 行程 ≤ 1 卡或低速）走原式逐字未动。
     private func deckSettleAnimation(distanceCards: CGFloat, releaseVelocityCards: CGFloat? = nil) -> Animation {
         if reduceMotion {
             return .linear(duration: 0.2)
@@ -2126,7 +2140,10 @@ struct LCGameHomeView: View {
     /// 变函数（当帧 place）严格成立、|place| ≤ 2 逐帧恒实心。
     /// 各公式与修饰符相对次序逐字未动；落点曲线（Phase 35，
     /// 它决定列车的速度剖面）/ 正面门 / 卡位偏移 / 跟随投影橡
-    /// 皮筋全保留——曲线之外再无任何属性另行插值。
+    /// 皮筋全保留——曲线之外再无任何属性另行插值。（Phase 37
+    /// 后高速多卡松手的发布段改走自由动量积分：偏移逐帧直写、
+    /// 连事务都没有，本修饰符的单时钟结论只更强，见
+    /// startDeckMomentum。）
     private func landscapeCarousel(list: [LCAppModel], metrics: LCLandscapeMetrics, size: CGSize) -> some View {
         let w = size.width
         let cover = metrics.cover
@@ -2181,6 +2198,10 @@ struct LCGameHomeView: View {
         // 时序），保留不删。
         .onChange(of: w) { _ in
             snapCarouselToFocus(list: list)
+        }
+        // Phase 37：牌组离屏停动量驱动（DisplayLink 不跨屏存活）。
+        .onDisappear {
+            stopDeckMomentum()
         }
     }
 
@@ -2245,6 +2266,9 @@ struct LCGameHomeView: View {
     /// 门），此处只提供 carousel 的切换动作（滚动到该卡 + 落聚焦 +
     /// settled 计时；滚动动画按行程取时长，见 deckSettleAnimation）。
     private func carouselTap(app: LCAppModel, index idx: Int, list: [LCAppModel]) {
+        // Phase 37：动量滚动中点卡先停驱动（点按本身即抓停意图），
+        // 随后的裁决 / 落位都基于停住的当帧偏移。
+        stopDeckMomentum()
         let place = CGFloat(idx) - carouselOffsetCards
         deckTap(app: app, index: idx, list: list, isSettled: carouselSettled && !carouselDragging, isFrontal: abs(place) <= 0.02) {
             beginCarouselScroll()
@@ -2261,6 +2285,10 @@ struct LCGameHomeView: View {
             .onChanged { value in
                 if !carouselDragging {
                     carouselDragging = true
+                    // Phase 37 抓停接管：动量滚动中落指先停驱动，拖
+                    // 动起点就是当帧偏移（积分直接写偏移状态），无
+                    // 缝接管、不跳位。
+                    stopDeckMomentum()
                     carouselDragStartCards = carouselOffsetCards
                     beginCarouselScroll()
                 }
@@ -2312,13 +2340,29 @@ struct LCGameHomeView: View {
                     velocityCards: velocity,
                     count: list.count
                 )
-                withAnimation(deckSettleAnimation(distanceCards: CGFloat(card) - carouselOffsetCards, releaseVelocityCards: velocity)) {
-                    carouselOffsetCards = CGFloat(card)
+                // Phase 37：高速多卡松手改走 Cover Flow 式自由动量
+                // （见 startDeckMomentum）——投影目标只用在门槛判定
+                // 上（行程 > 1 卡、|初速| 过吸附阈值、偏移在界内），
+                // 进动量后不再有「目标」，行程由初速与衰减率决定；
+                // 不满足门槛的低速 / 短行程松手逐字走下面的旧路径
+                // （投影定目标 + deckSettleAnimation）。
+                let velocityPerSecond = velocity * 1000
+                let projectedDistance = CGFloat(card) - carouselOffsetCards
+                if !reduceMotion,
+                   abs(velocityPerSecond) > Self.deckMomentumSnapVelocity,
+                   abs(projectedDistance) > 1,
+                   carouselOffsetCards >= 0,
+                   carouselOffsetCards <= CGFloat(list.count - 1) {
+                    startDeckMomentum(velocityPerSecond: velocityPerSecond, list: list)
+                } else {
+                    withAnimation(deckSettleAnimation(distanceCards: projectedDistance, releaseVelocityCards: velocity)) {
+                        carouselOffsetCards = CGFloat(card)
+                    }
+                    if list.indices.contains(card) {
+                        setFocusFromDeck(list[card])
+                    }
+                    finishCarouselScroll(epoch: carouselScrollEpoch)
                 }
-                if list.indices.contains(card) {
-                    setFocusFromDeck(list[card])
-                }
-                finishCarouselScroll(epoch: carouselScrollEpoch)
             }
     }
 
@@ -2393,6 +2437,8 @@ struct LCGameHomeView: View {
         guard !carouselDragging else {
             return
         }
+        // Phase 37：无动画落位前停动量，免驱动在落位后继续写偏移。
+        stopDeckMomentum()
         carouselScrollEpoch += 1
         carouselSettled = true
         let target = CGFloat(landscapeFocusIndex(in: list))
@@ -2409,7 +2455,9 @@ struct LCGameHomeView: View {
     /// 聚焦被外部改动（列表增删、竖屏切歌后转横屏）时把偏移跟上；
     /// 拖动中不干预（手势优先，与 NX 同义）。
     private func syncCarouselOffset(list: [LCAppModel]) {
-        guard !carouselDragging else {
+        // Phase 37：动量滚动中焦点由积分的过中点跟随推进（本函数的
+        // 触发源正是 focusKey 变化），同步动画不得与积分抢偏移。
+        guard !carouselDragging, !carouselMomentumActive else {
             return
         }
         let target = CGFloat(landscapeFocusIndex(in: list))
@@ -2421,6 +2469,101 @@ struct LCGameHomeView: View {
             carouselOffsetCards = target
         }
         finishCarouselScroll(epoch: carouselScrollEpoch)
+    }
+
+    /// 动量摩擦衰减率 λ（Phase 37）：速度 v(t) = v₀·e^(−λt)，总行
+    /// 程 D = v₀/λ。λ = 5.0 时 D = 0.20·v₀，对照旧投影口径
+    /// 0.22·v₀ 约 0.9 倍——各典型速度下与旧投影目标的差 ≤ 0.5 卡
+    /// （v₀ = 25 时），恒在 ±1 卡内，且偏短不偏长（防滚过头由行程
+    /// 关系本身控制、不靠中途改目标）。
+    private static let deckMomentumDecay: CGFloat = 5.0
+    /// 动量收尾阈值（卡/s）：速度衰减到此值即结束积分、用现行短
+    /// 曲线把剩余分数卡吸附到最近卡。0.8 卡/s 时单卡通过约 1.25s，
+    /// 已是「逐张停出」的末段节奏。
+    private static let deckMomentumSnapVelocity: CGFloat = 0.8
+
+    /// Cover Flow 式自由动量（Phase 37，取代 Phase 35 在高速多卡
+    /// 松手路径上的匀速定时曲线）：用户以 iPhone 4 年代音乐播放
+    /// 器 Cover Flow 为参照定模型——松手后不预定目标卡，偏移以松
+    /// 手速度为初速、在摩擦下连续衰减滚动（速度指数衰减，类
+    /// UIScrollView deceleration），整列卡随速度流过中心、尾段自
+    /// 然变慢逐张停出；速度衰减到 deckMomentumSnapVelocity 后，
+    /// 才用现行短曲线（deckSettleAnimation 的 ≤1 卡原式）把剩余
+    /// 分数卡（≤0.5 卡）吸附到最近卡。220ms 投影定目标只保留在
+    /// 低速 / 短行程松手路径（onEnded 门槛外，逐字旧式）。
+    ///
+    /// 测算（λ = 5.0、阈值 0.8，按总行程反推初速）：行程 2 卡
+    /// （v₀ = 10 卡/s）：动量段 0.51s 走 1.84 卡，吸附 ≤0.5 卡 /
+    /// 0.3s（占总时长约 37%）；行程 3 卡（v₀ = 15）：动量段
+    /// 0.59s 走 2.84 卡，吸附约 34%；行程 5 卡（v₀ = 25）：动
+    /// 量段 0.69s 走 4.84 卡，吸附约 30%。逐卡通过速率 = 当帧速
+    /// 度：起步 10–25 卡/s 疾过、末段近阈值时约 0.8–2 卡/s 逐
+    /// 张停出——与 #76 匀速到底的剖面正相反，是本模型的目的。
+    ///
+    /// 刚性（承 Phase 36 单时钟）：积分逐帧解析求解（Δ偏移 =
+    /// v/λ·(1 − e^(−λΔt))，帧率无关）并**直接写偏移状态本身**、
+    /// 不挂任何动画事务——LCDeckCardTransform 逐帧按当帧偏移同
+    /// 步渲染，动量段与慢拖跟随同构（都是偏移的逐写跳变）。抓停
+    /// 接管：新触摸 / 点卡 / 外部落位先 stopDeckMomentum，拖动起
+    /// 点读到的就是当帧偏移，无缝接管。到界：积分候选值越界即
+    /// 钳到界值并结束动量、在界上吸附（停界语义），不穿界、不
+    /// 弹回整列；橡皮筋仍只是拖动跟随段的事。焦点语义不变：积
+    /// 分逐帧按最近卡过中点提交（setFocusFromDeck），sync 的动
+    /// 画跟随在动量期被 carouselMomentumActive 守卫挡下。
+    private func startDeckMomentum(velocityPerSecond: CGFloat, list: [LCAppModel]) {
+        beginCarouselScroll()
+        carouselMomentumActive = true
+        deckMomentumVelocity = velocityPerSecond
+        deckMomentumDriver.onTick = { [self] dt in
+            deckMomentumTick(dt: dt, list: list)
+        }
+        deckMomentumDriver.start()
+    }
+
+    private func deckMomentumTick(dt: CGFloat, list: [LCAppModel]) {
+        let decay = CGFloat(exp(Double(-Self.deckMomentumDecay * dt)))
+        let velocity = deckMomentumVelocity
+        let travel = velocity / Self.deckMomentumDecay * (1 - decay)
+        deckMomentumVelocity = velocity * decay
+        var next = carouselOffsetCards + travel
+        let maxCards = CGFloat(list.count - 1)
+        var hitBound = false
+        if next <= 0, velocity < 0 {
+            next = 0
+            hitBound = true
+        } else if next >= maxCards, velocity > 0 {
+            next = maxCards
+            hitBound = true
+        }
+        carouselOffsetCards = next
+        // 焦点过中点提交（与拖动跟随同一口径）：积分跨过相邻中
+        // 点即把最近卡提交为焦点，标题 / 信息区随动。
+        let nearest = min(list.count - 1, max(0, Int(next.rounded())))
+        if nearest != landscapeFocusIndex(in: list) {
+            setFocusFromDeck(list[nearest])
+        }
+        if hitBound {
+            endDeckMomentum(list: list, snapTo: Int(next))
+        } else if abs(deckMomentumVelocity) <= Self.deckMomentumSnapVelocity {
+            endDeckMomentum(list: list, snapTo: nearest)
+        }
+    }
+
+    private func endDeckMomentum(list: [LCAppModel], snapTo card: Int) {
+        stopDeckMomentum()
+        withAnimation(deckSettleAnimation(distanceCards: CGFloat(card) - carouselOffsetCards)) {
+            carouselOffsetCards = CGFloat(card)
+        }
+        if list.indices.contains(card) {
+            setFocusFromDeck(list[card])
+        }
+        finishCarouselScroll(epoch: carouselScrollEpoch)
+    }
+
+    private func stopDeckMomentum() {
+        deckMomentumDriver.stop()
+        carouselMomentumActive = false
+        deckMomentumVelocity = 0
     }
 
     private func beginCarouselScroll() {
@@ -2492,6 +2635,40 @@ private struct LCDeckCardTransform: ViewModifier, Animatable {
             // 字一致；同步性来自本修饰符的单时钟构造，见头注释。
             .opacity(edgeOpacity)
             .allowsHitTesting(edgeOpacity > 0.05)
+    }
+}
+
+/// 动量积分的帧时钟（Phase 37）：CADisplayLink 逐帧回调 dt（秒，
+/// 首帧只记时刻、dt 钳 0.05 防切后台回来的大步）。只负责供时，
+/// 积分与状态写全在 LCGameHomeView 的 deckMomentumTick。stop 时
+/// 一并清 onTick，断开驱动器 → 闭包 → 视图状态的引用环。
+private final class LCDeckMomentumDriver: NSObject {
+    private var displayLink: CADisplayLink?
+    private var lastTimestamp: CFTimeInterval = 0
+    var onTick: ((CGFloat) -> Void)?
+
+    func start() {
+        stop()
+        lastTimestamp = 0
+        let link = CADisplayLink(target: self, selector: #selector(step(_:)))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    func stop() {
+        displayLink?.invalidate()
+        displayLink = nil
+        onTick = nil
+    }
+
+    @objc private func step(_ link: CADisplayLink) {
+        if lastTimestamp == 0 {
+            lastTimestamp = link.timestamp
+            return
+        }
+        let dt = CGFloat(link.timestamp - lastTimestamp)
+        lastTimestamp = link.timestamp
+        onTick?(min(dt, 0.05))
     }
 }
 
