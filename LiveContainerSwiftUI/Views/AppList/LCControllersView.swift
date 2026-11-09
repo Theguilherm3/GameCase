@@ -27,13 +27,31 @@ struct LCControllersView: View {
     /// 电量变化慢且 GameController 不发通知：30 秒重读一次（与 NX 壳适配器同策略）
     @State private var batteryTick = 0
 
-    // NX 壳 ShellPalette 原值
-    private static let background = Color(red: 0.055, green: 0.055, blue: 0.06)
-    private static let surface = Color(red: 0.10, green: 0.10, blue: 0.11)
-    private static let cream = Color(red: 1, green: 0.94, blue: 0.84)
+    // NX 壳 ShellPalette 原值；自适应轮改动态色：深色变体与原值逐字
+    // 一致，浅色变体与设置页 LCNXColor 同口径（页底 0.96 灰白、卡面
+    // 白、奶油金棕、发丝线黑 0.08）。状态色两模式共用、不翻。
+    private static let background = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.055, green: 0.055, blue: 0.06, alpha: 1)
+            : UIColor(red: 0.96, green: 0.96, blue: 0.97, alpha: 1)
+    })
+    private static let surface = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.10, green: 0.10, blue: 0.11, alpha: 1)
+            : UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+    })
+    private static let cream = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 1, green: 0.94, blue: 0.84, alpha: 1)
+            : UIColor(red: 0.66, green: 0.47, blue: 0.16, alpha: 1)
+    })
     private static let ready = Color(red: 0.25, green: 0.84, blue: 0.47)
     private static let attention = Color(red: 1, green: 0.78, blue: 0.24)
-    private static let hairline = Color.white.opacity(0.08)
+    private static let hairline = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.black.withAlphaComponent(0.08)
+    })
 
     private struct RowInfo: Identifiable {
         let id: ObjectIdentifier
@@ -90,7 +108,7 @@ struct LCControllersView: View {
         }
         .padding(.top, topContentPad)
         .background(Self.background.ignoresSafeArea())
-        .foregroundStyle(.white)
+        .foregroundStyle(.primary)
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             batteryTick += 1
         }
@@ -123,7 +141,7 @@ struct LCControllersView: View {
                         Image(systemName: "xmark")
                             .font(.system(size: 15, weight: .semibold))
                             .frame(width: 44, height: 44)
-                            .background(Color.white.opacity(0.08), in: Circle())
+                            .background(Color.primary.opacity(0.08), in: Circle())
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -153,7 +171,7 @@ struct LCControllersView: View {
                 .font(.system(size: 19, weight: .bold))
             Text("在蓝牙设置里连接手柄。游戏库里随时可以用触控操作。")
                 .font(.system(size: 14.5))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(.primary.opacity(0.6))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -185,8 +203,8 @@ struct LCControllersView: View {
             Image(systemName: "gamecontroller.fill")
                 .font(.system(size: 20))
                 .frame(width: 48, height: 48)
-                .background(.white.opacity(0.07), in: Circle())
-                .foregroundStyle(.white.opacity(0.9))
+                .background(.primary.opacity(0.07), in: Circle())
+                .foregroundStyle(.primary.opacity(0.9))
             VStack(alignment: .leading, spacing: 4) {
                 Text("玩家 \(row.player)")
                     .font(.system(size: 10.5, weight: .bold))
@@ -205,7 +223,7 @@ struct LCControllersView: View {
     /// 电量片（NX BatteryChip）：描边电池形 + 百分比，低电量琥珀、充电绿
     private func batteryChip(_ row: RowInfo) -> some View {
         let low = (row.batteryPercent ?? 100) < 20 && !row.charging
-        let tint: Color = low ? Self.attention : row.charging ? Self.ready : .white.opacity(0.75)
+        let tint: Color = low ? Self.attention : row.charging ? Self.ready : .primary.opacity(0.75)
         return HStack(spacing: 7) {
             if let percent = row.batteryPercent {
                 batteryShape(fraction: Double(percent) / 100)
@@ -224,10 +242,10 @@ struct LCControllersView: View {
         .lineLimit(1)
         .fixedSize()
         .font(.system(size: 12.5, weight: .semibold))
-        .foregroundStyle(row.batteryPercent == nil ? .white.opacity(0.45) : tint)
+        .foregroundStyle(row.batteryPercent == nil ? .primary.opacity(0.45) : tint)
         .padding(.horizontal, 10)
         .frame(minHeight: 28)
-        .background(.white.opacity(0.06), in: Capsule())
+        .background(.primary.opacity(0.06), in: Capsule())
     }
 
     private func batteryShape(fraction: Double) -> some View {
@@ -254,7 +272,7 @@ struct LCControllersView: View {
             Text("按钮")
                 .font(.system(size: 11.5, weight: .semibold))
                 .tracking(1.6)
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.primary.opacity(0.55))
             Button {
                 showTest = true
             } label: {
@@ -262,15 +280,15 @@ struct LCControllersView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("按键测试")
                             .font(.system(size: 15.5, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.primary)
                         Text("按下按键，对应的按键会亮起。")
                             .font(.system(size: 13))
-                            .foregroundStyle(.white.opacity(0.55))
+                            .foregroundStyle(.primary.opacity(0.55))
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(.primary.opacity(0.4))
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 13)
@@ -302,9 +320,21 @@ private struct LCControllerTestView: View {
     @State private var snapshot: Snapshot?
     private let tick = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
 
-    private static let card = Color(red: 0.075, green: 0.075, blue: 0.082)
-    private static let cream = Color(red: 1, green: 0.94, blue: 0.84)
-    private static let hairline = Color.white.opacity(0.08)
+    private static let card = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.075, green: 0.075, blue: 0.082, alpha: 1)
+            : UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+    })
+    private static let cream = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 1, green: 0.94, blue: 0.84, alpha: 1)
+            : UIColor(red: 0.66, green: 0.47, blue: 0.16, alpha: 1)
+    })
+    private static let hairline = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.black.withAlphaComponent(0.08)
+    })
 
     var body: some View {
         ScrollView {
@@ -316,7 +346,7 @@ private struct LCControllerTestView: View {
                             .lineLimit(1)
                         Text(headerName)
                             .font(.system(size: 13))
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(.primary.opacity(0.5))
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
@@ -324,7 +354,7 @@ private struct LCControllerTestView: View {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 14, weight: .semibold))
                             .frame(width: 44, height: 44)
-                            .background(.white.opacity(0.08), in: Circle())
+                            .background(.primary.opacity(0.08), in: Circle())
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -349,14 +379,14 @@ private struct LCControllerTestView: View {
                     .padding(.horizontal, 20)
                 Text("摇杆推动、扳机按压都会实时跟随")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.primary.opacity(0.6))
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, 18)
                     .padding(.top, 4)
             }
             .frame(maxWidth: 620)
             .background(Self.card, in: RoundedRectangle(cornerRadius: 26))
-            .overlay(RoundedRectangle(cornerRadius: 26).strokeBorder(.white.opacity(0.10)))
+            .overlay(RoundedRectangle(cornerRadius: 26).strokeBorder(.primary.opacity(0.10)))
             .padding(16)
             .frame(maxWidth: .infinity)
         }
@@ -404,11 +434,11 @@ private struct LCControllerTestView: View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label)
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(value > 0.02 ? Self.cream : .white.opacity(0.55))
+                .foregroundStyle(value > 0.02 ? Self.cream : .primary.opacity(0.55))
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(Color.primary.opacity(0.08))
                     RoundedRectangle(cornerRadius: 4)
                         .fill(Self.cream)
                         .frame(width: geo.size.width * CGFloat(min(1, max(0, value))))
@@ -422,26 +452,26 @@ private struct LCControllerTestView: View {
     private func shoulderChip(label: String, pressed: Bool) -> some View {
         Text(label)
             .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(pressed ? .black : .white.opacity(0.7))
+            .foregroundStyle(pressed ? .black : .primary.opacity(0.7))
             .padding(.horizontal, 16)
             .padding(.vertical, 7)
-            .background(pressed ? Self.cream : Color.white.opacity(0.08), in: Capsule())
+            .background(pressed ? Self.cream : Color.primary.opacity(0.08), in: Capsule())
     }
 
     private func stickView(point: CGPoint, pressed: Bool, label: String) -> some View {
         VStack(spacing: 6) {
             ZStack {
                 Circle()
-                    .stroke(Color.white.opacity(0.18), lineWidth: 1.5)
+                    .stroke(Color.primary.opacity(0.18), lineWidth: 1.5)
                     .frame(width: 56, height: 56)
                 Circle()
-                    .fill(pressed ? Self.cream : Color.white.opacity(0.35))
+                    .fill(pressed ? Self.cream : Color.primary.opacity(0.35))
                     .frame(width: 14, height: 14)
                     .offset(x: point.x * 18, y: point.y * 18)
             }
             Text(label)
                 .font(.system(size: 10.5))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(.primary.opacity(0.5))
         }
     }
 
@@ -449,7 +479,7 @@ private struct LCControllerTestView: View {
         let cell: CGFloat = 17
         func piece(_ pressed: Bool) -> some View {
             RoundedRectangle(cornerRadius: 3)
-                .fill(pressed ? Self.cream : Color.white.opacity(0.14))
+                .fill(pressed ? Self.cream : Color.primary.opacity(0.14))
                 .frame(width: cell, height: cell)
         }
         return VStack(spacing: 2) {
@@ -486,10 +516,10 @@ private struct LCControllerTestView: View {
     private func miniChip(label: String, pressed: Bool) -> some View {
         Text(label)
             .font(.system(size: 9.5, weight: .semibold))
-            .foregroundStyle(pressed ? .black : .white.opacity(0.6))
+            .foregroundStyle(pressed ? .black : .primary.opacity(0.6))
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
-            .background(pressed ? Self.cream : Color.white.opacity(0.08), in: Capsule())
+            .background(pressed ? Self.cream : Color.primary.opacity(0.08), in: Capsule())
     }
 
     private func faceButtons(_ s: Snapshot) -> some View {
@@ -499,7 +529,7 @@ private struct LCControllerTestView: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(pressed ? .black : color)
                 .frame(width: d, height: d)
-                .background(pressed ? color : Color.white.opacity(0.07), in: Circle())
+                .background(pressed ? color : Color.primary.opacity(0.07), in: Circle())
                 .overlay(Circle().strokeBorder(color.opacity(0.55), lineWidth: 1))
         }
         let yellow = Color(red: 0.95, green: 0.78, blue: 0.25)

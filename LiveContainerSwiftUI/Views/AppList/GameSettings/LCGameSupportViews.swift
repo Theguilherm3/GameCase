@@ -113,8 +113,10 @@ struct LCGameLogView: View {
 /// NX PrimaryPillStyle 同值本地版（可满宽）：奶油底黑字、bold 17、
 /// minHeight 50、按下 opacity 0.78 + scale 0.98。
 /// iOS 26 + Liquid Glass 可用时底换原生玻璃（无 tint，随外观自适应，
-/// 浅色下即浅色玻璃）；按下 opacity/scale 两分支共用、逐字保留。
-/// 否则逐字保留奶油底原实现。
+/// 浅色下即浅色玻璃）；玻璃分支的前景改语义色 .primary——原黑字压
+/// 无 tint 深色玻璃对比偏弱（#61 装机待验点），primary 深色为白、
+/// 浅色为黑，两模式都可读，就不再给玻璃加奶油 tint。按下
+/// opacity/scale 两分支共用、逐字保留。否则逐字保留奶油底原实现。
 private struct LCStatePillStyle: ButtonStyle {
     var expands = false
     func makeBody(configuration: Configuration) -> some View {
@@ -124,13 +126,14 @@ private struct LCStatePillStyle: ButtonStyle {
             .minimumScaleFactor(0.8)
             .padding(.horizontal, 26)
             .frame(maxWidth: expands ? .infinity : nil, minHeight: 50)
-            .foregroundColor(.black)
             .modifier { content in
                 if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
                     content
+                        .foregroundColor(.primary)
                         .glassEffect(.regular, in: .capsule)
                 } else {
                     content
+                        .foregroundColor(.black)
                         .background(LCGameTheme.nxCream, in: Capsule())
                 }
             }

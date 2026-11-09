@@ -51,34 +51,61 @@ private final class LCSettingsHeaderScroll: ObservableObject {
 
 /// NX ShellPalette 的逐值移植（Phase 17）：页底 / 卡面 / 奶油 / 就绪绿 /
 /// 注意琥珀 / 发丝线。LCGameTheme 的奶油色是近似值，本页照搬后统一用这里。
+/// 自适应轮（#60 留尾）：页底 / 卡面 / 奶油 / 发丝线改 UIColor trait
+/// 动态色——深色变体与原硬编码逐字一致，浅色变体取系统语义近似
+/// （页底 0.96 灰白、卡面白、发丝线黑 0.08、奶油加深为金棕，作填充
+/// 配黑字与作文字两用都可读）。状态三色（ready/attention/broken）
+/// 两模式共用、不翻。
 private enum LCNXColor {
-    static let background = Color(red: 0.055, green: 0.055, blue: 0.06)
-    static let surface = Color(red: 0.10, green: 0.10, blue: 0.11)
-    static let cream = Color(red: 1, green: 0.94, blue: 0.84)
+    static let background = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.055, green: 0.055, blue: 0.06, alpha: 1)
+            : UIColor(red: 0.96, green: 0.96, blue: 0.97, alpha: 1)
+    })
+    static let surface = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.10, green: 0.10, blue: 0.11, alpha: 1)
+            : UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+    })
+    static let cream = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 1, green: 0.94, blue: 0.84, alpha: 1)
+            : UIColor(red: 0.66, green: 0.47, blue: 0.16, alpha: 1)
+    })
+    /// 奶油色静态版（= cream 的深色值）：只给压在封面头图 / 晕染上的
+    /// 文字用（headerWords 的分组小题），那种底不随外观翻
+    static let creamOnDark = Color(red: 1, green: 0.94, blue: 0.84)
     static let ready = Color(red: 0.25, green: 0.84, blue: 0.47)
     static let attention = Color(red: 1, green: 0.78, blue: 0.24)
     /// 已损坏（状态机三态新增，与 LCGameTheme.brokenRed / 主页同值）
     static let broken = Color(red: 1, green: 0.42, blue: 0.38)
-    static let hairline = Color.white.opacity(0.08)
+    static let hairline = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.black.withAlphaComponent(0.08)
+    })
 }
 
 /// NX ChipButtonStyle 移植：「‹ 游戏库」深色胶囊（ultraThinMaterial 叠
 /// 黑 0.5、按下 0.62，白 0.14 描边，强制暗色环境渲染材质）。
-/// iOS 26 + Liquid Glass 可用时背景换原生玻璃（浮在封面图上，前景
-/// 白字不动，按压反馈由玻璃 interactive 自带）；否则逐字保留原实现。
+/// iOS 26 + Liquid Glass 可用时背景换原生玻璃：去固定黑 tint（regular
+/// 玻璃本身随外观自适应），前景改语义色 .primary（深色下仍是白字、
+/// 浅色下自动黑字），按压反馈由玻璃 interactive 自带；非玻璃回退
+/// 逐字保留原实现（含其上的白字）。
 private struct LCNXChipButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
             .padding(.horizontal, 14)
             .frame(minHeight: 44)
-            .foregroundColor(.white)
             .modifier { content in
                 if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
                     content
-                        .glassEffect(.regular.tint(.black.opacity(0.35)).interactive(), in: .capsule)
+                        .foregroundColor(.primary)
+                        .glassEffect(.regular.interactive(), in: .capsule)
                 } else {
                     content
+                        .foregroundColor(.white)
                         .background {
                             ZStack {
                                 Capsule().fill(.ultraThinMaterial)
@@ -119,12 +146,12 @@ private struct LCNXShellButtonStyle: ButtonStyle {
             .font(.system(size: 14, weight: .semibold))
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, minHeight: 44)
-            .foregroundColor(.white)
-            .background(Color.white.opacity(configuration.isPressed ? 0.13 : 0.055),
+            .foregroundColor(.primary)
+            .background(Color.primary.opacity(configuration.isPressed ? 0.13 : 0.055),
                         in: RoundedRectangle(cornerRadius: 9))
             .overlay {
                 RoundedRectangle(cornerRadius: 9)
-                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
             }
     }
 }
@@ -149,10 +176,10 @@ private struct LCCreamSwitch: View {
         } label: {
             ZStack(alignment: displayOn ? .trailing : .leading) {
                 Capsule()
-                    .fill(displayOn ? LCNXColor.cream : Color.white.opacity(0.14))
+                    .fill(displayOn ? LCNXColor.cream : Color.primary.opacity(0.14))
                     .frame(width: 46, height: 28)
                 Circle()
-                    .fill(displayOn ? LCNXColor.background : Color.white.opacity(0.85))
+                    .fill(displayOn ? LCNXColor.background : Color.primary.opacity(0.85))
                     .padding(3)
                     .frame(width: 28, height: 28)
             }
@@ -217,11 +244,11 @@ private struct LCChoiceRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(setting.label)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
             if locked || !setting.note.isEmpty {
                 Text(locked ? "由 env 文件固定，在这里改不了" : setting.note)
                     .font(.system(size: 12.5))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.primary.opacity(0.5))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -256,7 +283,7 @@ private struct LCChoiceRow: View {
                         .lineLimit(1)
                         .padding(.horizontal, 14)
                         .frame(maxWidth: .infinity, minHeight: 40)
-                        .foregroundColor(chosen ? .black : .white.opacity(0.75))
+                        .foregroundColor(chosen ? .black : .primary.opacity(0.75))
                         .background(chosen ? LCNXColor.cream : Color.clear,
                                     in: RoundedRectangle(cornerRadius: 8))
                 }
@@ -264,10 +291,10 @@ private struct LCChoiceRow: View {
             }
         }
         .padding(3)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 11))
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 11))
         .overlay {
             RoundedRectangle(cornerRadius: 11)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                .strokeBorder(LCNXColor.hairline, lineWidth: 1)
         }
     }
 
@@ -283,15 +310,15 @@ private struct LCChoiceRow: View {
                 .multilineTextAlignment(.trailing)
             Image(systemName: "chevron.right")
                 .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(.primary.opacity(0.4))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .frame(minHeight: 48)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 11))
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 11))
         .overlay {
             RoundedRectangle(cornerRadius: 11)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                .strokeBorder(LCNXColor.hairline, lineWidth: 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: 11))
     }
@@ -339,7 +366,13 @@ struct LCGameSettingsView: View {
     @State private var cropItem: LCCoverCropItem?
     @State private var coverErrorPresented = false
 
-    private static let pageBackground = Color(red: 0.055, green: 0.055, blue: 0.059)
+    /// 页底：动态色（深色值与原硬编码逐字一致，浅色与 LCNXColor
+    /// .background 的浅色变体同值）
+    private static let pageBackground = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.055, green: 0.055, blue: 0.059, alpha: 1)
+            : UIColor(red: 0.96, green: 0.96, blue: 0.97, alpha: 1)
+    })
 
     /// 页面根坐标系名（Phase 28）：封面头的背景量测 GeometryReader 以
     /// 此读头部在页面内的 minY，驱动页面根出血条随滚动同速移动
@@ -659,7 +692,7 @@ struct LCGameSettingsView: View {
                 Text("游戏设置")
                     .font(.system(size: 11.5, weight: .semibold))
                     .tracking(1.6)
-                    .foregroundColor(LCNXColor.cream.opacity(0.72))
+                    .foregroundColor(LCNXColor.creamOnDark.opacity(0.72))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
                 Text("版本 \(app.version)")
@@ -703,7 +736,7 @@ struct LCGameSettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("设置写入游戏容器，下次启动生效")
                 .font(.system(size: 14))
-                .foregroundColor(.white.opacity(0.72))
+                .foregroundColor(.primary.opacity(0.72))
             if !gameState.isPlayable {
                 LCGameStateHelpCard(state: gameState, onImportDatapack: {
                     datapackRequest = LCDatapackRequest(app: app)
@@ -721,12 +754,12 @@ struct LCGameSettingsView: View {
         HStack(spacing: 8) {
             Text(label)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
             Spacer(minLength: 8)
             value()
             Image(systemName: "chevron.right")
                 .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(.primary.opacity(0.4))
         }
         .frame(minHeight: 48)
         .contentShape(Rectangle())
@@ -735,7 +768,7 @@ struct LCGameSettingsView: View {
     /// NX 组内分隔：白 0.06、高 1
     private var nxDivider: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.06))
+            .fill(Color.primary.opacity(0.06))
             .frame(height: 1)
     }
 
@@ -833,7 +866,7 @@ struct LCGameSettingsView: View {
                 navRow(label: "存档") {
                     Text("在本机")
                         .font(.system(size: 12.5))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.primary.opacity(0.5))
                 }
             }
             .buttonStyle(.plain)
@@ -844,7 +877,7 @@ struct LCGameSettingsView: View {
                 navRow(label: "日志") {
                     Text(logRowValue)
                         .font(.system(size: 12.5))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.primary.opacity(0.5))
                 }
             }
             .buttonStyle(.plain)
@@ -876,7 +909,7 @@ struct LCGameSettingsView: View {
             } else if let icon = app.appInfo.iconIsDarkIcon(darkModeIcon) {
                 Image(uiImage: icon).resizable().scaledToFill()
             } else {
-                Rectangle().fill(Color.white.opacity(0.08))
+                Rectangle().fill(Color.primary.opacity(0.08))
             }
         }
         .frame(width: 44, height: 25)
@@ -989,11 +1022,11 @@ struct LCGameSettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(setting.label)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
             if locked || !setting.note.isEmpty {
                 Text(locked ? "由 env 文件固定，在这里改不了" : setting.note)
                     .font(.system(size: 12.5))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.primary.opacity(0.5))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1070,11 +1103,11 @@ struct LCGameSettingsView: View {
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
                 .frame(width: 44, height: 44)
-                .background(Color.white.opacity(0.055), in: Circle())
+                .background(Color.primary.opacity(0.055), in: Circle())
                 .overlay {
-                    Circle().strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                    Circle().strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
                 }
         }
         .buttonStyle(.plain)
@@ -1092,7 +1125,7 @@ struct LCGameSettingsView: View {
             .buttonStyle(LCNXShellButtonStyle())
             Text("清掉这个游戏在库里保存的全部启动器选择，回到打包时的默认值。按键布局不受影响。")
                 .font(.system(size: 12.5))
-                .foregroundColor(.white.opacity(0.45))
+                .foregroundColor(.primary.opacity(0.45))
         }
     }
 
@@ -1117,10 +1150,10 @@ struct LCGameSettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("显示游戏启动页")
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     Text("开启后，下次启动先显示游戏自带启动页；关闭则直接进入游戏。")
                         .font(.system(size: 12.5))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.primary.opacity(0.5))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 LCCreamSwitch(isOn: showGuestLauncher) { isOn in
@@ -1137,7 +1170,7 @@ struct LCGameSettingsView: View {
         sectionCard(title: "游戏设置") {
             Text("该游戏暂无内置档案，请进游戏内启动器调整。")
                 .font(.system(size: 14))
-                .foregroundColor(.white.opacity(0.72))
+                .foregroundColor(.primary.opacity(0.72))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -1146,7 +1179,7 @@ struct LCGameSettingsView: View {
         sectionCard(title: "游戏设置") {
             Text("这个游戏还没有数据容器：先启动一次游戏，容器生成后回到这里即可调整设置。")
                 .font(.system(size: 14))
-                .foregroundColor(.white.opacity(0.72))
+                .foregroundColor(.primary.opacity(0.72))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

@@ -15,11 +15,20 @@ import GameController
 // MARK: - 游戏库配色（自旧 LCGameCardView 抽出的共享常量，设置页 / 导入页也在用）
 
 enum LCGameTheme {
-    static let creamColor = Color(red: 0.965, green: 0.929, blue: 0.839)
+    /// 奶油强调色（文字 / 描边 / 选中态）：动态色——深色值与原硬编码
+    /// 逐字一致；浅色改深金棕，保证在浅底上作文字可读。恒深色面专用
+    /// 的静态版见 creamOnDark（按键布局编辑器的黑底 chip 在用）。
+    static let creamColor = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.965, green: 0.929, blue: 0.839, alpha: 1)
+            : UIColor(red: 0.55, green: 0.40, blue: 0.16, alpha: 1)
+    })
+    /// 奶油色静态版（= creamColor 的深色值）：只给恒深色底的面用
+    static let creamOnDark = Color(red: 0.965, green: 0.929, blue: 0.839)
     static let accentColor = Color(red: 0.788, green: 0.373, blue: 0.263)
-    // 压在页面/卡片底上的四项随外观翻转（UIColor trait 动态色）：深色值
-    // 与原硬编码逐字一致，浅色值见各行后段。封面图上的浮层色（chip*、
-    // nxCream 等）不翻，两模式共用。
+    // 压在页面/卡片底上的诸项随外观翻转（UIColor trait 动态色）：深色值
+    // 与原硬编码逐字一致，浅色值见各行后段。只压在封面图 / 固定深色罩
+    // 上的浮层色（chipBackground、chipIconOnDark 等）不翻，两模式共用。
     static let cardBackground = Color(UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 0.118, green: 0.118, blue: 0.129, alpha: 1)
@@ -32,7 +41,13 @@ enum LCGameTheme {
             ? UIColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1)
             : UIColor(red: 242 / 255, green: 242 / 255, blue: 247 / 255, alpha: 1)
     })
-    static let nxCream = Color(red: 1.0, green: 240 / 255, blue: 214 / 255)
+    /// 主操作奶油色（开始按钮 / 聚焦选中线）：动态色——深色值与原硬
+    /// 编码逐字一致；浅色略加深饱和，白底上作填充 / 玻璃 tint 不发飘
+    static let nxCream = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 1.0, green: 240 / 255, blue: 214 / 255, alpha: 1)
+            : UIColor(red: 0.96, green: 0.83, blue: 0.55, alpha: 1)
+    })
     static let mutedText = Color(UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 158 / 255, green: 158 / 255, blue: 164 / 255, alpha: 1)
@@ -48,8 +63,53 @@ enum LCGameTheme {
     /// 已损坏（状态机三态新增，与设置页 LCNXColor.broken 同值）
     static let brokenRed = Color(red: 1.0, green: 0.42, blue: 0.38)
     static let chipBackground = Color(red: 30 / 255, green: 28 / 255, blue: 29 / 255).opacity(0.92)
+    /// chip 描边（压封面图上，两模式共用）
     static let chipBorder = Color.white.opacity(0.18)
-    static let chipIcon = Color(red: 232 / 255, green: 230 / 255, blue: 228 / 255)
+    /// chip 描边（压页面 / 卡片自适应面上）：深色 = chipBorder 原值，
+    /// 浅色改黑 0.12
+    static let chipBorderOnSurface = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.18)
+            : UIColor.black.withAlphaComponent(0.12)
+    })
+    /// chip 图标色（玻璃 / 自适应面用）：动态色——深色值与原硬编码逐字
+    /// 一致；浅色改深暖灰。固定深底（非玻璃回退的 chipBackground）上
+    /// 用 chipIconOnDark 静态浅色，分工见 gcChipIconForeground。
+    static let chipIcon = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 232 / 255, green: 230 / 255, blue: 228 / 255, alpha: 1)
+            : UIColor(red: 0.16, green: 0.15, blue: 0.14, alpha: 1)
+    })
+    /// chip 图标静态浅色（= chipIcon 深色值）：只给固定深底用
+    static let chipIconOnDark = Color(red: 232 / 255, green: 230 / 255, blue: 228 / 255)
+}
+
+extension View {
+    /// 图面 chip 的图标 / 文字前景：玻璃分支（玻璃本身随外观自适应）
+    /// 用动态 chipIcon；非玻璃回退分支底是固定深色 chipBackground，
+    /// 用静态浅色 chipIconOnDark。两分支各自可读、深色逐字不变。
+    func gcChipIconForeground() -> some View {
+        self.modifier { view in
+            if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                view.foregroundColor(LCGameTheme.chipIcon)
+            } else {
+                view.foregroundColor(LCGameTheme.chipIconOnDark)
+            }
+        }
+    }
+
+    /// 底部开始按钮的底：玻璃开时原生 Liquid Glass（regular + 主操作
+    /// nxCream tint + interactive；苹果规范里 tint 只给主操作）；非玻璃
+    /// 回退逐字保留实心 nxCream 胶囊。
+    func gcStartButtonBackground() -> some View {
+        self.modifier { view in
+            if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
+                view.glassEffect(.regular.tint(LCGameTheme.nxCream).interactive(), in: .capsule)
+            } else {
+                view.background(LCGameTheme.nxCream).clipShape(Capsule())
+            }
+        }
+    }
 }
 
 // MARK: - 封面图（横版封面 → 图标兜底，与旧卡片 coverView 同语义）
@@ -92,7 +152,7 @@ struct LCGameCoverView: View {
             }
         } else {
             Rectangle()
-                .fill(Color.white.opacity(0.06))
+                .fill(Color.primary.opacity(0.06))
         }
     }
 
@@ -467,8 +527,9 @@ struct LCGameHomeView: View {
     }
 
     /// 圆形图面浮钮底：两个调用方（chromeButton、＋导入菜单）都是可点
-    /// 控件；iOS 26 + Liquid Glass 可用时换原生玻璃（黑低透 tint 保图上
-    /// 可读性、interactive 按压反馈），否则逐字保留 chip 填充+描边。
+    /// 控件；iOS 26 + Liquid Glass 可用时换原生玻璃（无 tint——regular
+    /// 玻璃本身随外观自适应、interactive 按压反馈，形态照 App Store
+    /// 浮动栏），否则逐字保留 chip 填充+描边。
     private func circleChrome(diameter: CGFloat, @ViewBuilder content: () -> some View) -> some View {
         ZStack {
             content()
@@ -477,7 +538,7 @@ struct LCGameHomeView: View {
         .modifier { view in
             if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
                 view
-                    .glassEffect(.regular.tint(.black.opacity(0.4)).interactive(), in: .circle)
+                    .glassEffect(.regular.interactive(), in: .circle)
             } else {
                 view
                     .background {
@@ -497,7 +558,7 @@ struct LCGameHomeView: View {
             circleChrome(diameter: diameter) {
                 Image(systemName: systemImage)
                     .font(.system(size: fontSize))
-                    .foregroundColor(LCGameTheme.chipIcon)
+                    .gcChipIconForeground()
             }
         }
         .buttonStyle(.plain)
@@ -517,14 +578,14 @@ struct LCGameHomeView: View {
                 Text("\(controllerMonitor.controllers.count)")
                     .font(.system(size: height * 0.4, weight: .bold))
             }
-            .foregroundColor(LCGameTheme.chipIcon)
+            .gcChipIconForeground()
             .padding(.horizontal, height * 0.32)
             .frame(height: height)
             .fixedSize(horizontal: true, vertical: false)
             .modifier { view in
                 if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
                     view
-                        .glassEffect(.regular.tint(.black.opacity(0.4)).interactive(), in: .capsule)
+                        .glassEffect(.regular.interactive(), in: .capsule)
                 } else {
                     view
                         .background {
@@ -566,7 +627,7 @@ struct LCGameHomeView: View {
             circleChrome(diameter: diameter) {
                 Image(systemName: "plus")
                     .font(.system(size: diameter * 0.4, weight: .semibold))
-                    .foregroundColor(LCGameTheme.chipIcon)
+                    .gcChipIconForeground()
             }
         }
     }
@@ -626,20 +687,23 @@ struct LCGameHomeView: View {
         VStack {
             HStack(spacing: 8) {
                 ProgressView()
-                    .tint(.white)
                 Text("正在安装 \(Int(installProgress * 100))%")
                     .font(.footnote.bold())
-                    .foregroundColor(.white)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .modifier { view in
                 if #available(iOS 26.0, *), SharedModel.isLiquidGlassEnabled {
-                    // 纯展示胶囊（安装进度）：玻璃不加 interactive
+                    // 纯展示胶囊（安装进度）：玻璃不加 interactive、不加
+                    // tint（随外观自适应），前景走语义色两模式都可读
                     view
-                        .glassEffect(.regular.tint(.black.opacity(0.45)), in: .capsule)
+                        .foregroundColor(.primary)
+                        .tint(.primary)
+                        .glassEffect(.regular, in: .capsule)
                 } else {
                     view
+                        .foregroundColor(.white)
+                        .tint(.white)
                         .background(Capsule().fill(Color.black.opacity(0.72)))
                         .overlay(Capsule().strokeBorder(LCGameTheme.chipBorder, lineWidth: 1))
                 }
@@ -695,7 +759,7 @@ struct LCGameHomeView: View {
                                 .font(.headline)
                                 .foregroundColor(LCGameTheme.chipIcon)
                                 .frame(width: 240, height: 50)
-                                .overlay(Capsule().strokeBorder(LCGameTheme.chipBorder, lineWidth: 1))
+                                .overlay(Capsule().strokeBorder(LCGameTheme.chipBorderOnSurface, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                         if hiddenAppsCount > 0 {
@@ -860,7 +924,7 @@ struct LCGameHomeView: View {
                             }
                         Text(app.displayName)
                             .font(.system(size: 14))
-                            .foregroundColor(.white)
+                            .foregroundColor(LCGameTheme.sectionText)
                             .lineLimit(1)
                         // 聚焦项名下米色线（照预览）
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -892,7 +956,7 @@ struct LCGameHomeView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(app.displayName)
                             .font(.system(size: 15))
-                            .foregroundColor(.white)
+                            .foregroundColor(LCGameTheme.sectionText)
                             .lineLimit(1)
                         recentSubtitle(for: app)
                         // 游玩时长行（Phase 18，用户指定只上「最近游玩」）：
@@ -910,7 +974,11 @@ struct LCGameHomeView: View {
                     } label: {
                         Image(systemName: "play.fill")
                             .font(.system(size: 15))
-                            .foregroundColor(Color(red: 168 / 255, green: 168 / 255, blue: 172 / 255))
+                            .foregroundColor(Color(UIColor { trait in
+                                trait.userInterfaceStyle == .dark
+                                    ? UIColor(red: 168 / 255, green: 168 / 255, blue: 172 / 255, alpha: 1)
+                                    : UIColor(red: 110 / 255, green: 110 / 255, blue: 115 / 255, alpha: 1)
+                            }))
                             .frame(width: 36, height: 36)
                     }
                     .buttonStyle(.plain)
@@ -927,7 +995,7 @@ struct LCGameHomeView: View {
 
                 if idx < rows.count - 1 {
                     Rectangle()
-                        .fill(Color.white.opacity(0.10))
+                        .fill(Color.primary.opacity(0.10))
                         .frame(height: 0.5)
                         .padding(.leading, m + 73 + 12)
                         .padding(.trailing, m)
@@ -989,8 +1057,7 @@ struct LCGameHomeView: View {
                         .foregroundColor(Color(red: 18 / 255, green: 18 / 255, blue: 18 / 255))
                         .frame(height: 56)
                         .frame(maxWidth: .infinity)
-                        .background(LCGameTheme.nxCream)
-                        .clipShape(Capsule())
+                        .gcStartButtonBackground()
                     }
                     .buttonStyle(.plain)
                     .disabled(focusedApp == nil || (focusedApp?.isAppRunning ?? false))
@@ -1569,7 +1636,7 @@ struct LCHiddenAppsView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(app.displayName)
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(LCGameTheme.sectionText)
                                 .lineLimit(1)
                             Text("版本 \(app.version)")
                                 .font(.system(size: 12.5))
@@ -1584,7 +1651,7 @@ struct LCHiddenAppsView: View {
                                 .foregroundColor(LCGameTheme.creamColor)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
-                                .overlay(Capsule().strokeBorder(LCGameTheme.chipBorder, lineWidth: 1))
+                                .overlay(Capsule().strokeBorder(LCGameTheme.chipBorderOnSurface, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                     }
@@ -1651,7 +1718,7 @@ struct LCHiddenAppsView: View {
                     .scaledToFill()
             } else {
                 Rectangle()
-                    .fill(Color.white.opacity(0.06))
+                    .fill(Color.primary.opacity(0.06))
             }
         }
     }
