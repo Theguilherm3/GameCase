@@ -1354,8 +1354,10 @@ private struct LCSettingsHeaderBackdrop: View {
 
 /// NX PaneBanner.background 移植：底图按头部实高 +160 绘制（向下
 /// 溢出垫进内容区）、整体罩 NX 的渐隐 mask。有横图：原图 +
-/// 压暗渐变（clear@0.3 → 黑 0.4@0.6 → 黑 0.55@1）；无横图：
-/// 图标自体放大 1.4 + blur 40 + saturation 1.2 + 黑 0.38 叠加。
+/// 压暗渐变（clear@0.3 → 黑 0.4@0.6 → 黑 0.55@1，Phase 35 起
+/// stops 改走 LCGameTheme.settingsBannerShadeStops 密采样、
+/// 锚点逐点不变）；无横图：图标自体放大 1.4 + blur 40 +
+/// saturation 1.2 + 黑 0.38 叠加。
 /// mask stops：锚点黑@0 / 黑@0.45 / 黑 0.55@0.68 / 黑 0.18@0.85
 /// / clear@1，Phase 33 起按同锚点单调三次密采样作 stops（见
 /// LCGameTheme.settingsBackdropMaskStops：锚点逐点过、终点
@@ -1364,7 +1366,11 @@ private struct LCSettingsHeaderBackdrop: View {
 /// 之内，topInset > 0 时黑 0.5 → clear、高 topInset + 50，锚在
 /// 图顶（背景帧已出血到物理顶）——亮封面下状态栏的时钟与电量
 /// 靠它保可读；NX 结构里此 overlay 盖在图层组全体之上，有 /
-/// 无横图都生效。
+/// 无横图都生效。Phase 35：stops 改走 settingsStatusScrimStops
+/// 密采样——原两段线性渐变的下缘（topInset + 50 = 118pt）是
+/// 斜率一步跳零的硬界，用户在兜底图浅色页头逐行采样定位到
+/// 它（见主题注释的定案过程）；锚点 0.5 / 0 逐点不变、上半
+/// 带只强不弱。
 /// 绘制总高（Phase 28）：geo 高 + extraTop + 160。两个实例共用
 /// 本视图且映射恒等——头内实例帧高 = 头部高、extraTop =
 /// topInset（帧再经 .offset 上移 topInset）；页面根出血条实例
@@ -1379,11 +1385,7 @@ var body: some View {
                         .resizable()
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
-                    LinearGradient(stops: [
-                        .init(color: .clear, location: 0.3),
-                        .init(color: .black.opacity(0.4), location: 0.6),
-                        .init(color: .black.opacity(0.55), location: 1),
-                    ], startPoint: .top, endPoint: .bottom)
+                    LinearGradient(stops: LCGameTheme.settingsBannerShadeStops, startPoint: .top, endPoint: .bottom)
                     .frame(width: geo.size.width, height: geo.size.height + extraTop + 160)
                 }
             } else if let image {
@@ -1402,7 +1404,7 @@ var body: some View {
         .frame(width: geo.size.width, height: geo.size.height + extraTop + 160, alignment: .top)
         .overlay(alignment: .top) {
             if topInset > 0 {
-                LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .top, endPoint: .bottom)
+                LinearGradient(stops: LCGameTheme.settingsStatusScrimStops, startPoint: .top, endPoint: .bottom)
                     .frame(height: topInset + 50)
             }
         }

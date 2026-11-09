@@ -196,6 +196,60 @@ enum LCGameTheme {
         zeroEndTangents: true
     ) { .black.opacity($0) }
 
+    /// 设置页页头状态栏 scrim 的锚点（NX 原规格）：黑 0.5 起、
+    /// 落到 0。原构造是这两点的一条两段线性渐变（LinearGradient
+    /// colors 直连），本表只记锚点、stops 走密采样（见下）。
+    static let settingsStatusScrimAnchors: [(location: Double, alpha: Double)] = [
+        (0, 0.5), (1, 0),
+    ]
+
+    /// 设置页页头状态栏 scrim stops（Phase 35）：锚点同上，改走
+    /// 单调三次密采样 13 点、两端切线归零。定案过程（用户装
+    /// Phase 33 的 nightly 后回图「上部还有线」）：对截图右带
+    /// （x 950–1240 纯 backdrop 列）逐行采样，全图唯一系统性
+    /// 斜率突变在 y≈354px = 物理顶下 118pt，亮度斜率由 +4.4/
+    /// 10px 翻到 −1.1/10px；旧图（Phase 33 之前）同一行同亮度
+    /// （≈198）同突变——线不在 Phase 33 动过的层里。118pt 正
+    /// 是本 scrim 的下缘（topInset 68 + 高 50，锚图顶）：线性
+    /// 渐变 alpha 在下缘归零、但斜率从恒定值一步跳到 0，压在
+    /// 平坦灰面上就是这条线。其余候选逐项排除：两实例出血交
+    /// 界在安全线 68pt（204px），采样曲线直穿无突变；backdrop
+    /// mask 离开满显平台在约 277pt，Phase 33 密采样后无突变；
+    /// 设置页深罩顶边 alpha 自 0 平滑起、无突变；兜底黑 0.38
+    /// 平叠与 y 无关。平滑后强度对照（s = 带内相对位置）：顶
+    /// 点 0.5 逐点不变（锚点必过）；s 0.25 处 0.375 → 0.422、
+    /// s 0.5 处 0.25 → 0.25、s 0.75 处 0.125 → 0.078——时钟 /
+    /// 电量所在的上半带只强不弱，下半带贴地缓收、斜率归零，
+    /// 线消除。深色模式共用本层：锚点与上半带强度不变，深色
+    /// 合成形态不变。
+    static let settingsStatusScrimStops: [Gradient.Stop] = denseSampledStops(
+        anchors: settingsStatusScrimAnchors.map { (x: $0.location, y: $0.alpha) },
+        samples: 13,
+        zeroEndTangents: true
+    ) { .black.opacity($0) }
+
+    /// 设置页页头有横图路径压暗渐变的锚点（NX 原规格）：
+    /// clear@0.3 → 黑 0.4@0.6 → 黑 0.55@1（loc 0.3 之前恒
+    /// clear，补 (0, 0) 锚点把平段钉住）。原构造是三点分段线
+    /// 性；Phase 35 与状态栏 scrim 同类处理（分段线性压在图
+    /// 面上留斜率拐点），证据图是无横图兜底路径、本渐变不在
+    /// 那张图里，属同类预防性平滑。stops 见下。
+    static let settingsBannerShadeAnchors: [(location: Double, alpha: Double)] = [
+        (0, 0), (0.30, 0), (0.60, 0.40), (1, 0.55),
+    ]
+
+    /// 设置页页头有横图压暗 stops（Phase 35）：锚点同上，单调
+    /// 三次密采样 17 点、两端切线归零。锚点逐点过：0.3 → 0、
+    /// 0.6 → 0.40、1 → 0.55；段内中点 loc 0.45 处 0.20 →
+    /// 0.168、loc 0.80 处 0.475 → 0.518（偏差 ≤0.043，在标
+    /// 题簇与 mask 衰减段覆盖下不可辨），全程单调无过冲。深
+    /// 浅共用本层，锚点强度逐字不变、深色合成形态不变。
+    static let settingsBannerShadeStops: [Gradient.Stop] = denseSampledStops(
+        anchors: settingsBannerShadeAnchors.map { (x: $0.location, y: $0.alpha) },
+        samples: 17,
+        zeroEndTangents: true
+    ) { .black.opacity($0) }
+
     /// hero 融合渐变的采样色：透明黑 → 页底色、混合因子 f。与原
     /// 两段线性渐变的分量模型逐字一致（RGB = 页底 RGB × f、
     /// alpha = f），只是混合因子从位置线性换成 heroFusionStops
