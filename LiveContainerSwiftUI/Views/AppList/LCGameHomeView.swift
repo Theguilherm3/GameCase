@@ -49,7 +49,9 @@ enum LCGameTheme {
     /// 帧下缘处仍剩约 0.27 的黑、只用 22pt 就收零，浅底上成一条看
     /// 得出的灰带（用户实测）。尾段较 #63 主页初版再放缓一档
     /// （0.26@0.82 / 0.08@0.93 → 0.24@0.81 / 0.06@0.92），末端更
-    /// 早趋零；峰值与标题带数值逐字不动。
+    /// 早趋零；峰值与标题带数值逐字不动。Phase 30 几何通则：两
+    /// 处的 loc 1（alpha 0）都必须正落在各自封面图的绘制下缘、
+    /// 罩不探出图外——几何取值见两处调用点注释。
     static let coverScrimStops: [Gradient.Stop] = [
         .init(color: .black.opacity(0), location: 0),
         .init(color: .black.opacity(0.22), location: 0.30),
@@ -263,20 +265,24 @@ struct LCGameHomeView: View {
 
     @State private var stateHelpTarget: LCGameStateTarget?
 
-    // 库顺序快照（照 NX2 LibraryOrder 的分组排序，竖屏网格与横屏
-    // 牌组共用）：主页出现时按「最近游玩 → 可玩 → 缺数据包 →
-    // 已损坏」（组内规则见 LCGameLibraryInfo.libraryOrder）定序一次，
-    // 浏览期间不重排（新导入的游戏追加在末尾、已卸载的剔除，相对
-    // 次序冻结；状态点颜色是现算的、会变，位置不变）。竖屏下方的
-    // 「最近游玩」区是分组第 0 组（玩过的游戏）的独立呈现，仍走
-    // recentApps，不受本快照影响；聚焦与 hero 也不读顺序。
+    // 库顺序快照（竖屏网格与横屏牌组共用）：Phase 30 起冻结并持久
+    // 化——快照落 UserDefaults（LCGameLibraryOrderStore），视图初值
+    // 直接读回，主页存活期间与回库（进程重启重建视图）都不再按
+    // 「最近游玩」重排；只有游戏集合变化（装 / 卸）时才收敛一次
+    // （幸存者相对次序不变、新游戏追加末尾，见 maintainLibraryOrder），
+    // 全新安装无快照时才按 LCGameLibraryInfo.libraryOrder（最近
+    // 游玩 → 可玩 → 缺数据包 → 已损坏）定序一次。冻结的动因是横屏
+    // 回库失同步，查实结论见 snapCarouselToFocus 的 Phase 30 复盘。
+    // 竖屏下方的「最近游玩」区是分组第 0 组（玩过的游戏）的独立
+    // 呈现，仍走 recentApps，不受本快照影响；聚焦与 hero 也不读
+    // 顺序。状态点颜色是现算的、会变，位置不变。
     // carouselOffset 是 >3 张时手势轮播的滚动量（点），静止时恒
-    // 等于聚焦序号 × stride；顺序变化（回库重排 / 增删）时由
-    // snapCarouselToFocus 在同一次更新里无动画重算（Phase 28）。
+    // 等于聚焦序号 × stride；存活期内顺序变化（装 / 卸收敛）时由
+    // snapCarouselToFocus 无动画重算（Phase 28 安全网，Phase 30 保留）。
     // carouselDragLogicalOffset 是拖动中的
     // 未钳制逻辑偏移（手指原始位移换算）：显示偏移在两端橡皮筋化，
     // 落点投影按逻辑偏移算，两者只在越界拖动时不同。
-    @State private var libraryOrderKeys: [String] = []
+    @State private var libraryOrderKeys: [String] = LCGameLibraryOrderStore.load()
     @State private var carouselOffset: CGFloat = 0
     @State private var carouselDragStartOffset: CGFloat = 0
     @State private var carouselDragLogicalOffset: CGFloat = 0
@@ -407,9 +413,9 @@ struct LCGameHomeView: View {
     // MARK: 横屏轮播的顺序与聚焦（NX2 CoverFlow 移植辅助）
 
     /// 全主页共用的有序数据源（横屏牌组与竖屏「你的游戏」网格同读）：
-    /// 顺序快照 ∩ 现有游戏，新游戏追加末尾；快照为空（首次出现前）时
-    /// 退回入参次序。浏览期间相对次序不变，重排只发生在 onAppear
-    /// 刷新快照时（快照的生成规则见 LCGameLibraryInfo.libraryOrder）。
+    /// 顺序快照 ∩ 现有游戏，新游戏追加末尾；快照为空（全新安装、尚未
+    /// 定序）时退回入参次序。Phase 30 起快照持久化且冻结：onAppear
+    /// 只做集合收敛（maintainLibraryOrder），不再按最近游玩重排。
     private var orderedApps: [LCAppModel] {
         let byKey = Dictionary(uniqueKeysWithValues: apps.map { (key(of: $0), $0) })
         var result = libraryOrderKeys.compactMap { byKey[$0] }
@@ -421,6 +427,34 @@ struct LCGameHomeView: View {
     /// 横屏牌组数据源 = 全主页有序口径（旧名保留，横屏内部读法不变）
     private var landscapeApps: [LCAppModel] {
         orderedApps
+    }
+
+    /// 顺序快照维护（Phase 30 冻结）：root onAppear 调用。
+    /// - 无快照（全新安装）：按 libraryOrder 定序一次并落盘——这是
+    ///   唯一按最近游玩排序的时点，此刻视图刚建、没有活着的偏移量，
+    ///   不会失同步。
+    /// - 有快照、集合变了（装 / 卸）：收敛为生效次序（幸存者相对
+    ///   次序不变、新游戏追加末尾，即 orderedApps 的推导结果）并
+    ///   落盘；变序发生在存活视图上，偏移由顺序签名 snap 兜底。
+    /// - 有快照、集合没变（普通出现 / 回库）：什么都不做——次序
+    ///   冻结，刚玩的游戏不换位置；焦点由 focusedApp 的缺省推导
+    ///   （最近启动款）跟随，牌组 onAppear 的 snap 按冻结序号落位
+    ///   （回库有淡入遮罩盖住接缝，落位无动画不可见）。
+    private func maintainLibraryOrder() {
+        guard !apps.isEmpty else {
+            return
+        }
+        if libraryOrderKeys.isEmpty {
+            let seeded = LCGameLibraryInfo.libraryOrder(of: apps).map { key(of: $0) }
+            libraryOrderKeys = seeded
+            LCGameLibraryOrderStore.save(seeded)
+            return
+        }
+        let effective = orderedApps.map { key(of: $0) }
+        if effective != libraryOrderKeys {
+            libraryOrderKeys = effective
+            LCGameLibraryOrderStore.save(effective)
+        }
     }
 
     private func landscapeFocusIndex(in list: [LCAppModel]) -> Int {
@@ -464,11 +498,34 @@ struct LCGameHomeView: View {
     /// 行程（以 stride 计）放大——一卡内仍是 0.3 的原手感，远行程至
     /// 多 0.55，避免多卡跳变套一卡时长显得硬切。减弱动态时按
     /// deckAnimation 同口径降为 0.2 线性。
-    private func deckSettleAnimation(distance: CGFloat, stride: CGFloat) -> Animation {
+    ///
+    /// Phase 30（仅拖动松手、且行程 > 1 卡时）：0.55 的定时曲线在
+    /// 多卡行程上读作拖尾（用户实测：小幅好评、大幅有延迟感），
+    /// 改走插值弹簧——interpolatingSpring(质量 1、刚度 150、阻尼
+    /// 24)，阻尼比 ≈0.98 近临界、无过冲；弹簧时标与行程无关
+    /// （包络衰减 ζω₀ ≈ 12/s，收敛到 1% 约 0.38s），多卡总时长
+    /// 天然次线性、落在约 0.38–0.45s。初速与松手速度连续：把
+    /// 「朝落点方向的松手速度（pt/s）÷ 行程（pt）」折算为弹簧的
+    /// 相对初速（单位 = 全行程/秒，钳 0–5），不从零速起步。一卡
+    /// 内（含小幅慢拖就近落点）与点卡、外部同步（不传速度）仍走
+    /// 下面的定时曲线原式，逐字未动。
+    private func deckSettleAnimation(distance: CGFloat, stride: CGFloat, releaseVelocity: CGFloat? = nil) -> Animation {
         if reduceMotion {
             return .linear(duration: 0.2)
         }
         let strides = stride > 0 ? Double(abs(distance) / stride) : 0
+        if strides > 1, let releaseVelocity {
+            // releaseVelocity 是 pt/ms（朝后一张卡为正，与偏移增
+            // 加同向）；朝落点方向的速度分量 = 它 × 方向符号
+            let towardTarget = Double(releaseVelocity) * 1000 * (distance >= 0 ? 1.0 : -1.0)
+            let relative = towardTarget / max(1, Double(abs(distance)))
+            return .interpolatingSpring(
+                mass: 1,
+                stiffness: 150,
+                damping: 24,
+                initialVelocity: min(5, max(0, relative))
+            )
+        }
         let duration = min(0.55, 0.3 + 0.09 * max(0, strides - 1))
         return .timingCurve(0.22, 0.61, 0.36, 1, duration: duration)
     }
@@ -593,7 +650,7 @@ struct LCGameHomeView: View {
                 app.refreshContainerSelection()
             }
             ensureFocus()
-            libraryOrderKeys = LCGameLibraryInfo.libraryOrder(of: apps).map { key(of: $0) }
+            maintainLibraryOrder()
             // 游玩时长补结（Phase 18）：主页出现 = 此刻没有客体在本进程跑，
             // 统计文件里还挂着的 openSession 必是闪退/被划掉没结清的局，
             // 按心跳补结后再读快照（回库路径已由客体侧结清，这里是空转）。
@@ -1014,9 +1071,19 @@ struct LCGameHomeView: View {
             // 浅色专用深罩（用户看预览拍板 P1）：浅色下融合渐变把封面
             // 下部洗成近白页底、白色大标题糊在亮底上。标题文字层之下
             // 加一层深色渐变罩：stops 用 LCGameTheme.coverScrimStops
-            // 共享形状（峰值 0.47 对准标题带、状态行处 0.42，向下经
-            // 版本行渐弱、在 hero 下缘外 12pt 处收零，不留硬界）；
-            // 深色模式不加、逐字保持现状（原渐变已是深色融合）。
+            // 共享形状。几何（Phase 30 修订）：旧几何罩高 0.62h+24、
+            // 下探 12——罩跨出封面图下缘、压在图外纯白页底上，图内
+            // 压的却是融合渐变洗过的像素，合成曲线在图缘处折角成
+            // 横向台阶（#69 拉长尾巴只能减轻、消不掉）。现罩底边与
+            // 图下缘齐平、下探 0，罩高改 0.58h：loc 1（alpha 0）正
+            // 落在图下缘，罩不探出图外一像素；图像向页底的融合由
+            // 上方既有融合渐变承担（页底色不透明，其「透明黑 → 页
+            // 底色」渐变与 alpha 蒙版淡出在合成上等价，故保留融合
+            // 渐变、不另加蒙版）。标题带强度按 h≈350 换算与此前同
+            // 级：状态行（缘上约 97pt）loc 约 0.52（约 0.42）、标
+            // 题（约 61pt）loc 约 0.70（约 0.46）、版本行（约
+            // 25pt）loc 约 0.88（约 0.13）。深色模式不加、逐字保
+            // 持现状（原渐变已是深色融合）。
             if colorScheme == .light {
                 VStack {
                     Spacer()
@@ -1024,8 +1091,7 @@ struct LCGameHomeView: View {
                         gradient: Gradient(stops: LCGameTheme.coverScrimStops),
                         startPoint: .top, endPoint: .bottom
                     )
-                    .frame(height: height * 0.62 + 24)
-                    .offset(y: 12)
+                    .frame(height: height * 0.58)
                 }
                 .allowsHitTesting(false)
             }
@@ -1773,7 +1839,9 @@ struct LCGameHomeView: View {
                 // 后一张卡为正的 pt/ms，投影时长 220ms，公式见
                 // cardSnap）——快甩可越过多张、慢拖落最近卡，不再有
                 // NX CardSnap 的一卡钳制。停稳时长按行程放大（见
-                // deckSettleAnimation）。落点卡的聚焦在这一帧补正提
+                // deckSettleAnimation；Phase 30 起松手速度一并传入，
+                // 多卡段走带初速的插值弹簧、一卡段原式未动）。落点
+                // 卡的聚焦在这一帧补正提
                 // 交（拖动中已跟随到最近卡，落点因速度投影更远时在
                 // 此对齐；Phase 23 的「背景 / 名牌淡化与吸附动画同帧
                 // 起跑」时序不变）。settled 仍由 finishCarouselScroll
@@ -1786,7 +1854,7 @@ struct LCGameHomeView: View {
                     stride: stride,
                     count: list.count
                 )
-                withAnimation(deckSettleAnimation(distance: CGFloat(card) * stride - carouselOffset, stride: stride)) {
+                withAnimation(deckSettleAnimation(distance: CGFloat(card) * stride - carouselOffset, stride: stride, releaseVelocity: velocity)) {
                     carouselOffset = CGFloat(card) * stride
                 }
                 if list.indices.contains(card) {
@@ -1815,13 +1883,37 @@ struct LCGameHomeView: View {
     /// 的动画跟随。shelf（≤3 张）的位置每帧由 chosen 现算、无这份存
     /// 储量，故只有 carousel 中招。
     ///
-    /// 一致性保证：本函数挂在顺序签名（list 的 key 序列）的 onChange
-    /// 上——任何变序 / 增删与偏移重算落在同一次状态更新里，渲染出的
-    /// 第一帧即对齐值，不靠延时补丁；onAppear 与宽度变化的旧落位点
-    /// 也统一走本函数。拖动中不干预（手势的 list 是手势开始时的快照，
-    /// 且变序事件都发生在牌组被弹层盖住或回库出现的时刻、与拖动不
-    /// 并发）。落位后 settled 即真：回库看到的聚焦卡可直接点启动，
-    /// 与「已停稳的聚焦卡」裁决口径一致。
+    /// Phase 30 复盘（#68 的签名网为何在真机回库路径上没拦住，代码
+    /// 查实）：回库不是存活视图上的一次重排，而是**进程重启后整棵
+    /// 视图树重建**（LCAppListView 的回库淡入遮罩注释即「盖住进程
+    /// 重启接缝」、returnFade 初值在 init 里读标记）。重建后整个重
+    /// 排发生在出现级联之内：①牌组是深层子视图，onAppear 自内向
+    /// 外送达，先于 root onAppear 写 libraryOrderKeys——本函数那时
+    /// 读到的是快照为空的 orderedApps（退回 sharedAppSortManager
+    /// 的原始入参序），把偏移写成聚焦卡在**旧序**里的序号；②root
+    /// onAppear 随后写新序 + ensureFocus 定焦点，但这两个写都落在
+    /// 牌组的 onChange 修饰符**首次提交基线之前**——onChange 只对
+    /// 基线确立之后的变化触发，级联内完成的变序与焦点赋值被基线
+    /// 吸收，顺序签名与 focusKey 两条 onChange 都不会火；③此后再
+    /// 无任何写偏移的路径，几何永久停在旧序号，而信息区是纯推导
+    /// 逐帧正确。对照组：横竖旋转时牌组子树在存活视图上重建，本
+    /// 函数的 onAppear 读到的是早已提交的现行序，落位正确、可自
+    /// 愈——分界正在「重排与重建是否同级联」。Phase 28 的分析默认
+    /// 了「重排是存活视图上的事后变化」，对装 / 卸成立、对回库不
+    /// 成立。Phase 30 的解法是取消回库重排本身（快照冻结 + 持久
+    /// 化，见 maintainLibraryOrder）：级联里不再有变序，本函数的
+    /// onAppear 读到的第一份 list 即冻结序，落位天然正确；焦点跟
+    /// 随走 focusedApp 缺省推导（最近启动款），其序号全程不变，
+    /// syncCarouselOffset 的动画跟随路径（存活期内改 focusKey，
+    /// 基线早已确立）不受级联问题影响、逐字未动。
+    ///
+    /// 本函数的现行职责（Phase 30）：onAppear / 宽度变化时按现行
+    /// 冻结序落位；顺序签名 onChange 保留作存活期安全网——装 / 卸
+    /// 令 maintainLibraryOrder 收敛快照时，变序是基线确立之后的事
+    /// 后变化，签名网正常触发、与重算落在同一次状态更新里。拖动
+    /// 中不干预（手势的 list 是手势开始时的快照）。落位后 settled
+    /// 即真：回库看到的聚焦卡可直接点启动，与「已停稳的聚焦卡」
+    /// 裁决口径一致。
     private func snapCarouselToFocus(list: [LCAppModel], stride: CGFloat) {
         guard !carouselDragging else {
             return
@@ -1867,6 +1959,24 @@ struct LCGameHomeView: View {
                 carouselSettled = true
             }
         }
+    }
+}
+
+// MARK: - 库顺序快照持久化
+
+/// 库顺序快照落盘（Phase 30）：回库是进程重启、@State 不跨进程
+/// 存活，冻结的次序只能落 UserDefaults。只存相对路径键序列；读
+/// 回后仍经 orderedApps 与当前游戏集合求交，落盘值过期（装 / 卸
+/// 后未及收敛）不会产生幽灵条目，收敛由 maintainLibraryOrder 负责。
+enum LCGameLibraryOrderStore {
+    private static let defaultsKey = "gc.libraryOrderSnapshot.v1"
+
+    static func load() -> [String] {
+        UserDefaults.standard.stringArray(forKey: defaultsKey) ?? []
+    }
+
+    static func save(_ keys: [String]) {
+        UserDefaults.standard.set(keys, forKey: defaultsKey)
     }
 }
 
