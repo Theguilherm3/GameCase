@@ -622,24 +622,26 @@ struct LCGameSettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
         .background(alignment: .bottom) {
-            // 浅色专用深罩（用户看预览拍板 P1，与主页 hero 同法）：
-            // 本背景层在封面 backdrop 之上、信息簇之下。backdrop 的
-            // mask 在标题带已衰减到约半透明,浅色下页底透出把白标题
-            // 与副行洗没;此罩不走 mask,峰值(黑 0.46)对准大标题、
-            // 副行处仍有 0.40,罩底探出头帧下缘 22pt 后收零,不留
-            // 硬界。副行(「游戏设置 · 版本」)就在罩的覆盖内、且其
-            // 前景本就是压图语义(creamOnDark / 白 0.5),随罩解决、
-            // 不改语义色。深色模式不加、逐字保持现状。
+            // 浅色专用深罩（用户看预览拍板 P1）：本背景层在封面
+            // backdrop 之上、信息簇之下。backdrop 的 mask 在标题带
+            // 已衰减到约半透明，浅色下页底透出把白标题与副行洗没；
+            // 此罩不走 mask。副行（「游戏设置 · 版本」）就在罩的覆
+            // 盖内、且其前景本就是压图语义（creamOnDark / 白 0.5），
+            // 随罩解决、不改语义色。深色模式不加、逐字保持现状。
+            // stops 与几何（用户复验后修订）：#63 时本处自带一套陡
+            // 尾 stops（0.40@0.86 → 0@1、高 234、下探 22），帧下缘
+            // 处仍剩约 0.27 的黑、22pt 内收零，浅底上成一条看得出
+            // 的灰带。现改用 LCGameTheme.coverScrimStops 共享形状
+            // （与主页 hero 同一套），罩高 500、下探 128：底锚定下
+            // 标题块（帧下缘上 26–88pt）落在 loc 0.57–0.69 的峰值
+            // 平台（约 0.43–0.45）、副行（约 8pt）loc 约 0.73（约
+            // 0.39，与此前 0.40 同级不回退）；帧下缘以下用 128pt
+            // 长尾缓降（约 33pt 处 0.24、88pt 处 0.06），交界不再
+            // 成带。
             if colorScheme == .light {
-                LinearGradient(stops: [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black.opacity(0.30), location: 0.40),
-                    .init(color: .black.opacity(0.46), location: 0.58),
-                    .init(color: .black.opacity(0.40), location: 0.86),
-                    .init(color: .clear, location: 1),
-                ], startPoint: .top, endPoint: .bottom)
-                .frame(height: 234)
-                .offset(y: 22)
+                LinearGradient(stops: LCGameTheme.coverScrimStops, startPoint: .top, endPoint: .bottom)
+                .frame(height: 500)
+                .offset(y: 128)
                 .allowsHitTesting(false)
             }
         }

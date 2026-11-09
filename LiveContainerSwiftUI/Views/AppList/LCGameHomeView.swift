@@ -41,6 +41,24 @@ enum LCGameTheme {
             ? UIColor(red: 10 / 255, green: 10 / 255, blue: 11 / 255, alpha: 1)
             : UIColor(red: 242 / 255, green: 242 / 255, blue: 247 / 255, alpha: 1)
     })
+    /// 浅色封面头深罩的共享 stops（P1 的主页版形状）：主页 hero 与
+    /// 每游戏设置页头共用同一套——峰值 0.47 在标题带、其前 0.42 的
+    /// 宽平台罩住整个标题块，尾部两段缓降（0.24 → 0.06 → 0）不留
+    /// 硬界。两处只差几何（罩总高 / 帧下下探量），形状禁止各处另
+    /// 写：#63 时设置页自带一套陡尾 stops（0.40@0.86 → 0@1），罩在
+    /// 帧下缘处仍剩约 0.27 的黑、只用 22pt 就收零，浅底上成一条看
+    /// 得出的灰带（用户实测）。尾段较 #63 主页初版再放缓一档
+    /// （0.26@0.82 / 0.08@0.93 → 0.24@0.81 / 0.06@0.92），末端更
+    /// 早趋零；峰值与标题带数值逐字不动。
+    static let coverScrimStops: [Gradient.Stop] = [
+        .init(color: .black.opacity(0), location: 0),
+        .init(color: .black.opacity(0.22), location: 0.30),
+        .init(color: .black.opacity(0.42), location: 0.52),
+        .init(color: .black.opacity(0.47), location: 0.68),
+        .init(color: .black.opacity(0.24), location: 0.81),
+        .init(color: .black.opacity(0.06), location: 0.92),
+        .init(color: .black.opacity(0), location: 1),
+    ]
     /// 主操作奶油色（开始按钮 / 聚焦选中线）：动态色——深色值与原硬
     /// 编码逐字一致；浅色略加深饱和，白底上作填充 / 玻璃 tint 不发飘
     static let nxCream = Color(UIColor { trait in
@@ -993,22 +1011,15 @@ struct LCGameHomeView: View {
             }
             // 浅色专用深罩（用户看预览拍板 P1）：浅色下融合渐变把封面
             // 下部洗成近白页底、白色大标题糊在亮底上。标题文字层之下
-            // 加一层深色渐变罩：峰值（黑 0.47）对准标题带、状态行处
-            // 0.42,向下经版本行渐弱、在 hero 下缘外 12pt 处收零,不留
-            // 硬界;深色模式不加、逐字保持现状(原渐变已是深色融合)。
+            // 加一层深色渐变罩：stops 用 LCGameTheme.coverScrimStops
+            // 共享形状（峰值 0.47 对准标题带、状态行处 0.42，向下经
+            // 版本行渐弱、在 hero 下缘外 12pt 处收零，不留硬界）；
+            // 深色模式不加、逐字保持现状（原渐变已是深色融合）。
             if colorScheme == .light {
                 VStack {
                     Spacer()
                     LinearGradient(
-                        gradient: Gradient(stops: [
-                            .init(color: Color.black.opacity(0), location: 0),
-                            .init(color: Color.black.opacity(0.22), location: 0.30),
-                            .init(color: Color.black.opacity(0.42), location: 0.52),
-                            .init(color: Color.black.opacity(0.47), location: 0.68),
-                            .init(color: Color.black.opacity(0.26), location: 0.82),
-                            .init(color: Color.black.opacity(0.08), location: 0.93),
-                            .init(color: Color.black.opacity(0), location: 1)
-                        ]),
+                        gradient: Gradient(stops: LCGameTheme.coverScrimStops),
                         startPoint: .top, endPoint: .bottom
                     )
                     .frame(height: height * 0.62 + 24)
