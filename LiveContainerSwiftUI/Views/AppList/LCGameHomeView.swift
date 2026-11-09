@@ -618,7 +618,8 @@ struct LCGameHomeView: View {
     // 竖屏下方的「最近游玩」区是分组第 0 组（玩过的游戏）的独立
     // 呈现，仍走 recentApps，不受本快照影响；聚焦与 hero 也不读
     // 顺序。状态点颜色是现算的、会变，位置不变。
-    // carouselOffsetCards 是 >3 张时手势轮播的滚动量，单位 = 卡位
+    // carouselOffsetCards 是横屏牌组手势轮播的滚动量（Phase 39 起
+    // 全卡数共用，旧制仅 >3 张），单位 = 卡位
     // （1.0 = 一张卡的 stride），静止时恒等于聚焦序号本身；存活期内
     // 顺序变化（装 / 卸收敛）时由 snapCarouselToFocus 无动画重算
     // （Phase 28 安全网，Phase 30 保留）。
@@ -656,11 +657,12 @@ struct LCGameHomeView: View {
     @State private var deckMomentumVelocity: CGFloat = 0
     @State private var deckMomentumDriver = LCDeckMomentumDriver()
     // 横屏牌组点击裁决（Phase 27）：上次裁决时刻（同一触摸被重复投递
-    // 时的时间窗去重）与最近一次牌组切换时刻（shelf 没有 carousel 的
-    // settled 机制，用它判停稳，deckLastSwitchAt 由 setFocusFromDeck
-    // 记录）——见 deckTap 注释。
+    // 时的时间窗去重）——见 deckTap 注释。Phase 39 前另有
+    // deckLastSwitchAt（最近一次牌组切换时刻：shelf 没有 carousel
+    // 的 settled 机制、其时间制停稳 deckSettled 读它判停稳，
+    // setFocusFromDeck 写它），随小库统一与 deckSettled 一并删除：
+    // 停稳判定自此全卡数走 carouselSettled。
     @State private var deckTapAdjudicatedAt: Date = .distantPast
-    @State private var deckLastSwitchAt: Date = .distantPast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
@@ -843,7 +845,6 @@ struct LCGameHomeView: View {
     }
 
     private func setFocusFromDeck(_ app: LCAppModel) {
-        deckLastSwitchAt = Date()
         withAnimation(deckAnimation) {
             focusKey = key(of: app)
         }
@@ -1830,8 +1831,6 @@ struct LCGameHomeView: View {
         let cardAreaTop: CGFloat
         let gap: CGFloat
         let titleSize: CGFloat
-        /// 安全区宽：shelf 的卡宽封顶按它算（NX shelf 的 width 入参）
-        let contentWidth: CGFloat
 
         init(safeSize: CGSize, safe: EdgeInsets) {
             let width = safeSize.width
@@ -1852,7 +1851,6 @@ struct LCGameHomeView: View {
             cardAreaHeight = cardHeight * 1.06
             // 卡区顶换算回本视图（全屏出血）坐标：安全区原点 + middle
             cardAreaTop = safe.top + middle - cardAreaHeight / 2
-            contentWidth = width
         }
     }
 
@@ -1866,14 +1864,11 @@ struct LCGameHomeView: View {
 
             // 卡区 + 信息区：卡区顶按整屏中点定位，信息区跟在卡区下方 gap 处
             VStack(spacing: 0) {
-                Group {
-                    if list.count <= 3 {
-                        landscapeShelf(list: list, metrics: metrics, width: metrics.contentWidth)
-                    } else {
-                        landscapeCarousel(list: list, metrics: metrics, size: size)
-                    }
-                }
-                .frame(height: metrics.cardAreaHeight)
+                // Phase 39：≤3 张不再分流 shelf，全卡数同一套
+                // carousel 列车（差异对照与推论见 landscapeCarousel
+                // 头注释的 Phase 39 段）。
+                landscapeCarousel(list: list, metrics: metrics, size: size)
+                    .frame(height: metrics.cardAreaHeight)
 
                 if let app = focusedApp {
                     landscapeInfo(app: app, metrics: metrics, width: w)
@@ -2076,70 +2071,7 @@ struct LCGameHomeView: View {
             .shadow(color: .black.opacity(colorScheme == .light ? 0.16 : 0.5), radius: cardW * 0.05, y: cardW * 0.03)
     }
 
-    /// 1…3 张（NX shelf）：一字排开居中，聚焦卡原大、邻卡 0.8 缩放压暗
-    /// （brightness -0.22），每张按 (序号 - 中位) × 卡宽 0.78 错位叠放；
-    /// 横滑一格切一张（NX 手势门槛：最小距离 24、|dx| > 44 且 > |dy|×1.5），
-    /// 两端停住不绕圈。单张时无邻卡、无错位，就是居中一张。
-    /// 定位走布局空间（Phase 15）：旧实现所有卡共用同一块居中布局帧、
-    /// 只靠 offset / scaleEffect 摆出渲染位置，命中区留在布局帧上——
-    /// 聚焦卡（zIndex 10 先命中）的命中矩形比它渲染出的右缘多探约
-    /// 0.39×卡宽，罩住邻卡可见区的内侧一大半，点邻卡会误启动聚焦款；
-    /// contextMenu 又挂在已变换的视图上，长按预览按布局帧取快照、
-    /// 内容被变换推偏裁切。现在缩放直接折进卡的渲染尺寸、落位用
-    /// position（布局锚点），每张卡的布局帧即渲染帧：命中形状与
-    /// 渲染形状一致、重叠区按 zIndex 归上层（聚焦卡）；菜单挂的就
-    /// 是这张未变换的卡，系统长按预览按其真实帧取快照、封面完整
-    /// （带 preview 的 contextMenu 写法要 iOS 16、部署目标 15 用不了，
-    /// 本法是其等价替代）。几何常量（卡宽封顶、0.78 步距、0.8 缩放、
-    /// -0.22 压暗、zIndex 规则）一律未动。
-    private func landscapeShelf(list: [LCAppModel], metrics: LCLandscapeMetrics, width w: CGFloat) -> some View {
-        let card = min(metrics.cover, w / (1 + CGFloat(list.count - 1) * 0.8))
-        let chosen = landscapeFocusIndex(in: list)
-        return GeometryReader { geo in
-            ZStack {
-                ForEach(list.indices, id: \.self) { idx in
-                    let app = list[idx]
-                    let isChosen = idx == chosen
-                    let scale: CGFloat = isChosen ? 1 : 0.8
-                    let renderedW = card * scale
-                    landscapeCard(app: app, cardW: renderedW, isFocused: isChosen, transformScale: scale)
-                        .brightness(isChosen ? 0 : -0.22)
-                        .contentShape(RoundedRectangle(cornerRadius: renderedW * 0.03, style: .continuous))
-                        .onTapGesture {
-                            deckTap(app: app, index: idx, list: list, isSettled: deckSettled) {
-                                setFocusFromDeck(app)
-                            }
-                        }
-                        .contextMenu {
-                            gameContextMenu(for: app)
-                        }
-                        .position(
-                            x: geo.size.width / 2 + (CGFloat(idx) - CGFloat(list.count - 1) / 2) * card * 0.78,
-                            y: geo.size.height / 2
-                        )
-                        .zIndex(isChosen ? 10 : -Double(abs(idx - chosen)))
-                }
-            }
-            .frame(width: geo.size.width, height: geo.size.height)
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 24)
-                    .onEnded { value in
-                        let dx = value.translation.width
-                        let dy = value.translation.height
-                        guard list.count > 1, abs(dx) > 44, abs(dx) > abs(dy) * 1.5 else {
-                            return
-                        }
-                        let target = min(list.count - 1, max(0, chosen + (dx < 0 ? 1 : -1)))
-                        if target != chosen {
-                            setFocusFromDeck(list[target])
-                        }
-                    }
-            )
-        }
-    }
-
-    /// 4 张起（NX carousel 的手势移植）：部署目标 15 用不了 NX 的
+    /// 全部卡数（Phase 39 起；旧制 4 张起，NX carousel 的手势移植）：部署目标 15 用不了 NX 的
     /// ScrollView 吸附 API，改手势驱动同一套几何——place = 序号 - 偏移
     /// （Phase 31 起偏移以卡位存储，见 carouselOffsetCards 注释；点值
     /// 只在下方 position 按当帧 stride 现算），每卡按 FlowTilt 变形：
@@ -2224,6 +2156,30 @@ struct LCGameHomeView: View {
     /// 后高速多卡松手的发布段改走自由动量积分：偏移逐帧直写、
     /// 连事务都没有，本修饰符的单时钟结论只更强，见
     /// startDeckMomentum。）
+    ///
+    /// Phase 39（小库统一）：≤3 张旧走 landscapeShelf（NX shelf 的
+    /// 静态排列：一字排开居中、聚焦卡原大、邻卡渲染尺寸 0.8 +
+    /// brightness -0.22、无存储偏移、位置每帧按 chosen 现算，横滑
+    /// 过门槛一手势切一卡，点按裁决用时间制停稳 deckSettled 且正
+    /// 面门恒真豁免）——观感与行为与本列车是两套（用户实测「横屏
+    /// 只有 3 个封面时似乎还是旧排列方式」）。本轮起分流取消：1–3
+    /// 张与 4 张起逐字同一条路径（同一份偏移状态、LCDeckCardTransform
+    /// 的 place 派生式、同一拖动 / 落点 / 动量 / 点击裁决），卡尺寸
+    /// 统一取 metrics.cover——shelf 的按卡数封顶（卡宽 ≤ 安全区宽 /
+    /// (1 + (n−1)×0.8)）随 shelf 退役：那是「整排全显」旧排列的尺寸
+    /// 口径，列车形态下邻卡本就以 place ±1 的倾斜位居于中心两侧，
+    /// 与大库中段逐点同构，无需为小库另设尺寸。行为推论均由现行
+    /// 公式直接得出、无小库特判：1 张时 place 恒 0、居中陈列，拖
+    /// 动只有两端橡皮筋与松手回弹、点按即启动；2 张时落点行程
+    /// ≤ 1 卡，动量门槛（投影行程 > 1 卡）天然不达、恒走低速落点
+    /// 路径；3 张时端到端甩动行程可达 2 卡、初速过 1.2 卡/s 即可
+    /// 进动量。回库落位 / 顺序冻结 / 正面门自此对小库同样成立
+    /// （shelf 时代靠每帧现算位置规避回库错位，小库进列车后由
+    /// Phase 30 冻结序 + Phase 31 卡位口径 + snap 安全网覆盖，
+    /// 与大库同一套保证）。landscapeShelf 与仅它使用的
+    /// deckSettled、metrics.contentWidth 一并删除；deckLastSwitchAt
+    /// 随 deckSettled 失去最后一个读者，其状态与 setFocusFromDeck
+    /// 内的写入一并移除（setFocusFromDeck 其余行为不变）。
     private func landscapeCarousel(list: [LCAppModel], metrics: LCLandscapeMetrics, size: CGSize) -> some View {
         let w = size.width
         let cover = metrics.cover
@@ -2238,10 +2194,11 @@ struct LCGameHomeView: View {
                 // 部派生变换收进 LCDeckCardTransform（animatableData
                 // = 全列共享的偏移本人），单时钟刚性列车。
                 landscapeCard(app: app, cardW: cover, isFocused: idx == focusIdx)
-                    // Phase 15 审计：命中走 position 布局落位（见
-                    // landscapeShelf 注释），无 shelf 的误启动病；
-                    // 菜单原挂在旋转 / 缩放之后的视图上、与 shelf
-                    // 的预览病同源，改挂到未变换的卡本体上——
+                    // Phase 15 审计：命中走 position 布局落位（布局
+                    // 帧即渲染帧、命中形状与渲染形状一致），无变换
+                    // 后命中错位的误启动病；菜单原挂在旋转 / 缩放
+                    // 之后的视图上、长按预览按布局帧取快照会被变
+                    // 换推偏裁切，同源改挂到未变换的卡本体上——
                     // 系统快照源即卡本身，变换全部留在菜单之外。
                     .contextMenu {
                         gameContextMenu(for: app)
@@ -2285,13 +2242,6 @@ struct LCGameHomeView: View {
         }
     }
 
-    /// shelf 的停稳判定：距上次牌组切换 ≥ 切换动画时长（0.3）+ 余量，
-    /// 与 carousel 的 0.32 口径对齐（reduceMotion 时动画 0.2，同一
-    /// 阈值仍成立）。
-    private var deckSettled: Bool {
-        Date().timeIntervalSince(deckLastSwitchAt) >= 0.32
-    }
-
     /// 横屏牌组点击的唯一裁决点（Phase 27，取代 Phase 16 的快照裁决）：
     /// 滑动切换走既有手势、不经此；点后面的封面只切换；只有点已经
     /// 停稳在前面的封面才启动。
@@ -2324,9 +2274,10 @@ struct LCGameHomeView: View {
     /// 在卡位口径下现算——静止值是整数序号，判定精确）。聚焦卡停
     /// 在不正位置时（Phase 31 前的点值污染定格、或任何未来写出偏
     /// 值的路径），点它改走 focusAction 精确落位到该卡正面、不启
-    /// 动：点一下必先归正，绝不带着倾角误启。shelf 无存储偏移、
-    /// 位置由 chosen 每帧现算，被点卡即聚焦卡时 place 恒为 0，
-    /// 正面门恒真，故 shelf 不传此参（默认 true、行为逐字不变）。
+    /// 动：点一下必先归正，绝不带着倾角误启。Phase 39 前 shelf
+    /// 路径不传此参（其位置每帧现算、被点卡即聚焦卡时 place 恒
+    /// 为 0、正面门恒真）；小库统一后全路径经 carouselTap 传入现
+    /// 算 place，默认值只剩签名兼容意义。
     private func deckTap(app: LCAppModel, index idx: Int, list: [LCAppModel], isSettled: Bool, isFrontal: Bool = true, focusAction: () -> Void) {
         if Date().timeIntervalSince(deckTapAdjudicatedAt) < 0.4 {
             return
