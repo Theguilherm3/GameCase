@@ -25,6 +25,43 @@ private struct LCDatapackBodyHeightKey: PreferenceKey {
     }
 }
 
+/// 呈现瘦身的版本分工（2026-11-09 预览定版：只收尺寸，内容不动）：
+/// iOS 18+ 用 presentationSizing——iPad 上是居中表单卡（系统表单宽约
+/// 540，封顶口径与预览的约 560 一致）、高度按内容理想高贴合，状态切换
+/// 由系统重算并动画；iPhone 上仍是底部 sheet、宽随屏、高同样贴合。
+/// iOS 16/17 用正文实测高拼的 .height detent。iOS 15 不加修饰，维持
+/// 现状全高 page sheet。
+private struct LCDatapackSheetSizingModifier: ViewModifier {
+    let detentHeight: CGFloat
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.presentationSizing(.form.fitted(horizontal: false, vertical: true))
+        } else if #available(iOS 16.0, *) {
+            content.presentationDetents([.height(detentHeight)])
+        } else {
+            content
+        }
+    }
+}
+
+/// 选游戏列表定高（iOS 16+）：iOS 18 档 fitted 读 frame 定列表理想高，
+/// 16/17 档与 detent 的列表区保持一致；iOS 15 不约束、列表仍占满全高
+/// sheet（现状）。封顶后列表内部滚动（见 pickerListHeight 的预算说明）。
+private struct LCDatapackPickerHeightModifier: ViewModifier {
+    let height: CGFloat
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.frame(height: height)
+        } else {
+            content
+        }
+    }
+}
+
 /// 拷贝分块大小（放文件级常量：拷贝在后台线程跑，不能读主 actor 隔离的静态成员）
 private let lcDatapackChunkSize = 4 * 1024 * 1024
 
@@ -98,21 +135,7 @@ struct LCDatapackImportView: View {
                 measuredBodyHeight = newHeight
             }
         }
-        .modifier { content in
-            // 呈现瘦身（2026-11-09 预览定版：只收尺寸，内容与操作不动）：
-            // iOS 18+ 用 presentationSizing——iPad 上是居中表单卡（系统表单
-            // 宽约 540，封顶口径与预览的约 560 一致）、高度按内容理想高贴合，
-            // 状态切换由系统重算并动画；iPhone 上仍是底部 sheet、宽随屏、
-            // 高同样贴合。iOS 16/17 用正文实测高拼的 .height detent（公式见
-            // sheetDetentHeight）。iOS 15 不加修饰，维持现状全高 page sheet。
-            if #available(iOS 18.0, *) {
-                content.presentationSizing(.form.fitted(horizontal: false, vertical: true))
-            } else if #available(iOS 16.0, *) {
-                content.presentationDetents([.height(sheetDetentHeight)])
-            } else {
-                content
-            }
-        }
+        .modifier(LCDatapackSheetSizingModifier(detentHeight: sheetDetentHeight))
         .onAppear {
             // 本页的写侧解析（existingDatapackSize / startCopy / 文件夹
             // 导入）与读侧复核共用 defaultContainer 的同一份快照：出现
@@ -224,17 +247,7 @@ struct LCDatapackImportView: View {
                 Text("数据包要导入哪个游戏？")
             }
         }
-        .modifier { content in
-            // 列表定高（iOS 16+）：iOS 18 档 fitted 读这处 frame 定列表的
-            // 理想高，16/17 档与 detent 的列表区保持一致；iOS 15 不约束，
-            // 列表仍占满全高 sheet（现状）。封顶后列表内部滚动（见
-            // pickerListHeight 的预算说明）。
-            if #available(iOS 16.0, *) {
-                content.frame(height: pickerListHeight)
-            } else {
-                content
-            }
-        }
+        .modifier(LCDatapackPickerHeightModifier(height: pickerListHeight))
     }
 
     // MARK: 已选游戏
