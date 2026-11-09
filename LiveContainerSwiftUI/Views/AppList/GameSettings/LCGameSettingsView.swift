@@ -628,8 +628,9 @@ struct LCGameSettingsView: View {
             // 此罩不走 mask。副行（「游戏设置 · 版本」）就在罩的覆
             // 盖内、且其前景本就是压图语义（creamOnDark / 白 0.5），
             // 随罩解决、不改语义色。深色模式不加、逐字保持现状。
-            // stops 与几何：stops 用 LCGameTheme.coverScrimStops
-            // 共享形状（与主页 hero 同一套）。几何经两轮修订：
+            // stops 与几何：stops 与主页 hero 同锚点同采样
+            // （Phase 33 起改走 LCGameTheme.settingsScrimStops
+            // 密采样版，见主题注释）。几何经两轮修订：
             // #69 把罩高拉到 500、下探 128 拉长尾巴，台阶减轻但
             // 仍在（用户复验）——根因是罩与图的终点不一致：罩在
             // 帧下缘 +128 处收零，而封面图（backdrop 向下溢出
@@ -644,10 +645,27 @@ struct LCGameSettingsView: View {
             // 换算下标题块（帧下缘上 26–88pt）落在 loc 0.53–0.65
             // （约 0.43–0.47，#69 为 0.43–0.45）、副行（约 8pt）
             // loc 约 0.68（约 0.47，#69 为 0.39，只强不弱）。
+            // Phase 33（设置页同步主页 Phase 32 的平滑口径，用户
+            // 在 S2Arm 兜底图页头实测台阶后令同步处理）：罩 stops
+            // 改走 settingsScrimStops（同锚点单调三次密采样 17
+            // 点），标题带 / 副行等效强度只强不弱（见主题注释的
+            // 对照）；罩上再叠主页同纹理同不透明度的静态噪点
+            // （heroNoiseImage × heroDitherOpacity），与罩同带同
+            // 几何（高 532、下探 160），打散残余量化色带；仅浅
+            // 色（与罩同条件、与主页一致），深色不加层。
             if colorScheme == .light {
-                LinearGradient(stops: LCGameTheme.coverScrimStops, startPoint: .top, endPoint: .bottom)
-                .frame(height: 532)
-                .offset(y: 160)
+                ZStack {
+                    LinearGradient(stops: LCGameTheme.settingsScrimStops, startPoint: .top, endPoint: .bottom)
+                        .frame(height: 532)
+                        .offset(y: 160)
+                    if LCGameTheme.heroDitherOpacity > 0 {
+                        Image(uiImage: LCGameTheme.heroNoiseImage)
+                            .resizable()
+                            .frame(height: 532)
+                            .offset(y: 160)
+                            .opacity(LCGameTheme.heroDitherOpacity)
+                    }
+                }
                 .allowsHitTesting(false)
             }
         }
@@ -1338,7 +1356,10 @@ private struct LCSettingsHeaderBackdrop: View {
 /// 溢出垫进内容区）、整体罩 NX 的渐隐 mask。有横图：原图 +
 /// 压暗渐变（clear@0.3 → 黑 0.4@0.6 → 黑 0.55@1）；无横图：
 /// 图标自体放大 1.4 + blur 40 + saturation 1.2 + 黑 0.38 叠加。
-/// mask stops：黑@0 / 黑@0.45 / 黑 0.55@0.68 / 黑 0.18@0.85 / clear@1。
+/// mask stops：锚点黑@0 / 黑@0.45 / 黑 0.55@0.68 / 黑 0.18@0.85
+/// / clear@1，Phase 33 起按同锚点单调三次密采样作 stops（见
+/// LCGameTheme.settingsBackdropMaskStops：锚点逐点过、终点
+/// loc 1 归零逐字不变、段内平滑进出）。
 /// 状态栏 scrim（Phase 26 补回，NX 原规格）：叠在图层之上、mask
 /// 之内，topInset > 0 时黑 0.5 → clear、高 topInset + 50，锚在
 /// 图顶（背景帧已出血到物理顶）——亮封面下状态栏的时钟与电量
@@ -1387,13 +1408,7 @@ var body: some View {
         }
     }
     .mask {
-        LinearGradient(stops: [
-            .init(color: .black, location: 0),
-            .init(color: .black, location: 0.45),
-            .init(color: .black.opacity(0.55), location: 0.68),
-            .init(color: .black.opacity(0.18), location: 0.85),
-            .init(color: .clear, location: 1),
-        ], startPoint: .top, endPoint: .bottom)
+        LinearGradient(stops: LCGameTheme.settingsBackdropMaskStops, startPoint: .top, endPoint: .bottom)
     }
 }
 
