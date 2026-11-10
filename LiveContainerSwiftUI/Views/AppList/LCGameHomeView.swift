@@ -384,6 +384,74 @@ enum LCGameTheme {
         color: heroBlendColor
     )
 
+    /// 主页 hero 底图熔化 mask 的锚点（Phase 43）：语法照设置
+    /// 页 settingsBackdropMaskAnchors（满显段 → 长尾渐隐 →
+    /// 末端归零），落点按主页几何与行位换算、未照搬数值——
+    /// 设置页行位在其图高 0.45–0.64 深处、满显到 0.45；主
+    /// 页行位在图高 0.73–0.93，照搬则标题处 mask 只剩约
+    /// 0.175（数值模型：合成亮度 +34、白字对比 6.9 → 4.2，
+    /// 否决）。本表满显到 0.48、行位取值 状态行 0.734 / 标
+    /// 题 0.542 / 版本行 0.130、图底归零。定案与对照见
+    /// heroBackdropMaskStops 注释。
+    static let heroBackdropMaskAnchors: [(location: Double, alpha: Double)] = [
+        (0, 1), (0.48, 1), (0.68, 0.80), (0.80, 0.62),
+        (0.88, 0.38), (0.93, 0.14), (1, 0),
+    ]
+
+    /// 主页 hero 底图熔化 mask stops（Phase 43）：锚点同上，
+    /// 走 denseSampledStops 密采样 129 点、两端切线归零
+    /// （采样数与 #94 的罩 / 融合对齐；采样值经 Swift 工具
+    /// 链复算与数值模型逐值一致、值域 [0, 1] 无过冲）。仅
+    /// 浅色挂载（调用点），深色逐字零影响。
+    ///
+    /// Phase 43 定案（用户装 #94 后实测「只是白色变高了，
+    /// 没有设置页这种平滑渐变的效果」）：以仓库同一采样函
+    /// 数复刻两栈数值模型（主页 h≈356、设置页图高 591），
+    /// 把图像权重 w（图像在合成中的系数）分解——设置页
+    /// w = mask × (1 − 压暗)：满显 0.45 之后由图像自身
+    /// alpha 主导衰减（mask 0.55@0.66 → 0.13@0.85 → 0@1，
+    /// w 过 0.5 / 0.25 / 0.02 在图高 0.51 / 0.68 /
+    /// 0.92）；主页 #94 的 w = 1 − 融合 f，100% 由叠加
+    /// 层承担：图像恒不透明、被页底色预乘叠加按 f 逐行替
+    /// 换，f 爬到可见强度处即读作一条上爬的白色带。#94 只
+    /// 把同一形状密采样——真机同列差分：#94 前后带内仅
+    /// −3…−16 lum、白边（lum ≥ 220）位置 354pt 未动，模
+    /// 型差分与真机逐点 ±2 内吻合，形状未变、观感未变。
+    /// 截图同列（x 0.86–0.985）另证：主页饱和度在 240–
+    /// 276pt 先塌完、亮度到约 354pt 才爬满（颜色先死、
+    /// 白随后爬 = 叠加替换签名）；设置页亮度尾程（60 →
+    /// 209）拉开约 200pt、与饱和同步衰减（图像原地溶
+    /// 解）。
+    ///
+    /// 修法（机制级移植）：浅色下底图挂本 mask 原地熔
+    /// 化、融合层浅色退役（深色逐字保留——深色融合是向近
+    /// 黑页底的淡出、机制不同且已定版），#94 深罩逐字不
+    /// 动（罩形未动、行位读数与 #94 逐点相等）。同形核
+    /// 对（均匀 190 / 130 输入）：w 带 frac 0.61 →
+    /// 0.98（带长受 hero 图高 356 的物理上限约束；设置
+    /// 页 336pt / frac 0.35 → 0.92 @591）；均匀 130 的
+    /// 带内平台 31.5 → 7pt、斜率步 0.195 → 0.191（不
+    /// 劣）；行位合成（丝之歌 / 哈迪斯横图 strip 口径）
+    /// 状态行 73.7 / 75.8 → 54.5 / 57.4、标题 90.1 /
+    /// 88.7 → 68.4 / 66.2（白字 WCAG 6.9 / 7.0 → 9.7 /
+    /// 10.0，只强不弱）、版本行 160.1 / 159.6 → 161.6 /
+    /// 161.1（深字对比 2.29 / 2.27 → 2.33 / 2.31，持
+    /// 平）；hero 底缘合成 229.1 逐点不变（罩下探 12 的
+    /// 收尾与 #94 同位）。无横图兜底（图标糊化底 + 中央
+    /// 清晰图标）整幅同 mask 熔化：图标中心 loc 0.5 处
+    /// mask 0.997 近全显、下缘 loc 0.775 处 0.670 随底
+    /// 同溶、无硬边；兜底行位合成（有效底 lum ≈ 43）
+    /// 53.0 / 72.5 / 163.6 vs #94 的 72.6 / 92.8 /
+    /// 162.2，同向不回退。横屏浅色已核对为同构：封面权
+    /// 重 0.75 起经径向 / 纵向 / 底部融合三道乘性衰减
+    /// （0.5@frac 0.62、0.02@0.94）、帧内 y ≈ 385–395
+    /// 已收满页底、底半斜率步 ≤ 0.17，本轮不动。
+    static let heroBackdropMaskStops: [Gradient.Stop] = denseSampledStops(
+        anchors: heroBackdropMaskAnchors.map { (x: $0.location, y: $0.alpha) },
+        samples: 129,
+        zeroEndTangents: true
+    ) { .black.opacity($0) }
+
     /// 横屏浅色专用底部融合 stops（Phase 34）：曲线口径同
     /// heroFusionStops（单调三次密采样、两端切线归零），着色
     /// 模型走竖屏融合的页底色 alpha 直 ramp（pageBackground
@@ -1490,9 +1558,30 @@ struct LCGameHomeView: View {
     private func portraitHero(width: CGFloat, height: CGFloat, safeTop: CGFloat, margin m: CGFloat) -> some View {
         ZStack {
             if let app = focusedApp {
-                LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
-                    .frame(width: width, height: height)
-                    .clipped()
+                // Phase 43：浅色下底图挂熔化 mask（heroBackdrop
+                // MaskStops）原地溶入页底——机制级移植设置页定
+                // 版的主力层（图像自身 alpha 长尾渐隐），取代
+                // 融合叠加的「白色带」读法（定案见主题注
+                // 释）。无横图兜底整幅同熔（糊化底与中央清晰
+                // 图标一并渐隐、无硬边）。深色不挂 mask、底图
+                // 逐字不变。
+                Group {
+                    if colorScheme == .light {
+                        LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
+                            .frame(width: width, height: height)
+                            .clipped()
+                            .mask {
+                                LinearGradient(
+                                    gradient: Gradient(stops: LCGameTheme.heroBackdropMaskStops),
+                                    startPoint: .top, endPoint: .bottom
+                                )
+                            }
+                    } else {
+                        LCGameCoverView(app: app, darkModeIcon: darkModeIcon, refreshToken: refreshToken, beautifiedFallback: true)
+                            .frame(width: width, height: height)
+                            .clipped()
+                    }
+                }
             }
             // 底部渐隐到黑、顶部压暗保状态栏可读（照预览 vgrad 取值）
             VStack {
@@ -1511,13 +1600,19 @@ struct LCGameHomeView: View {
             // 两通道同为单条连续平滑函数），几何（带高 0.48h、底
             // 锚定）与端点逐字不变；深浅两模式共用此层，深色模式
             // 本轮只换 stops 曲线、不动形态与强度。
-            VStack {
-                Spacer()
-                LinearGradient(
-                    gradient: Gradient(stops: LCGameTheme.heroFusionStops),
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(height: height * 0.48)
+            // Phase 43：本层浅色退役——浅色的图 → 页底过渡改由
+            // 底图 mask 原地熔化承担（见上与主题 heroBackdrop
+            // MaskStops 注释），本层只在深色渲染（深色融合是向
+            // 近黑页底的淡出、形态与强度逐字不变）。
+            if colorScheme == .dark {
+                VStack {
+                    Spacer()
+                    LinearGradient(
+                        gradient: Gradient(stops: LCGameTheme.heroFusionStops),
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(height: height * 0.48)
+                }
             }
             // 浅色专用深罩（用户看预览拍板 P1）：浅色下融合渐变把封面
             // 下部洗成近白页底、白色大标题糊在亮底上。标题文字层之下
