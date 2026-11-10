@@ -13,6 +13,7 @@
 #include <execinfo.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 #include "../litehook/src/litehook.h"
 #import "Tweaks/Tweaks.h"
@@ -1320,6 +1321,124 @@ static void LCQuickBarInstall(void) {
     });
 }
 
+// 客体容器「游玩名」换名：容器夹的静息名按产品口径取游戏名、可能含中文，
+// 而某些第三方打包的客体（如 GLESign 的 Unity 一体包）在初始化早期会被
+// 数据路径里的非 ASCII 字符弄坏（函数指针被未重定位数据占据后跳飞）。
+// 修法不动静息名：启动漏斗在算客体 HOME 之前把真实文件夹同目录改名为
+// ASCII 游玩名（客体 bundle id，被占则 .2/.3），客体全程面对真实 ASCII
+// 路径；宿主每次启动（LiveContainerMain，进库读任何容器之前）先做一遍
+// 回名扫描把处于换名态的夹改回静息名——回库必经宿主进程重拉，游玩中途
+// 断电/被杀停在游玩名的夹也在下次打开 GC 时自愈。符号链接别名不行：
+// 客体侧会把路径还原成真实路径，别名下照样崩（已实测否决）。
+// 启用口径：只对静息名含非 ASCII 字符的容器启用（正是已证实的崩溃类）；
+// ASCII 名容器零行为变化。书签容器与内置 SideStore 不走本漏斗，不受影响。
+// 状态载体：容器夹内的标记文件，内容 = 静息夹名（UTF-8 纯文本）。状态
+// 完全从文件系统判读、不依赖内存与宿主偏好：换名前先落标记再 rename，
+// rename(2) 原子，进程在任何窗口被杀都能被回名扫描判读——夹在静息名且
+// 有标记 = 残留标记（杀在落标记与 rename 之间），只删标记；夹在游玩名
+// 且标记记着静息名 = 换名态，改回并删标记。
+static NSString * const GCPlayNameSwapMarkerName = @".gcPlayNameSwap";
+
+static BOOL GCPlayNameSwapNameHasNonASCII(NSString *name) {
+    for (NSUInteger i = 0; i < name.length; i++) {
+        if ([name characterAtIndex:i] > 0x7F) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+// 回名：扫一个数据根，把带标记且当前名 ≠ 标记所记静息名的真实目录改回
+// 静息名。符号链接条目一律跳过；静息名位置被任何东西占用时绝不强占，
+// 原样留待下轮（宿主每次启动都会再扫，占用方只可能是用户在文件 App 的
+// 手工操作）。任何失败只 NSLog、绝不挡宿主启动。
+static void GCPlayNameSwapRestoreDataRoot(NSString *dataRootPath) {
+    if (dataRootPath.length == 0) {
+        return;
+    }
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSArray<NSString *> *entries = [fm contentsOfDirectoryAtPath:dataRootPath error:nil];
+    for (NSString *entry in entries) {
+        NSString *entryPath = [dataRootPath stringByAppendingPathComponent:entry];
+        struct stat st;
+        if (lstat(entryPath.fileSystemRepresentation, &st) != 0 || !S_ISDIR(st.st_mode)) {
+            continue;
+        }
+        NSString *markerPath = [entryPath stringByAppendingPathComponent:GCPlayNameSwapMarkerName];
+        NSString *restingName = [NSString stringWithContentsOfFile:markerPath encoding:NSUTF8StringEncoding error:nil];
+        restingName = [restingName stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (restingName.length == 0 || [restingName containsString:@"/"]) {
+            continue; // 无标记或标记损坏：不动
+        }
+        if ([entry isEqualToString:restingName]) {
+            [fm removeItemAtPath:markerPath error:nil]; // 残留标记
+            continue;
+        }
+        NSString *restingPath = [dataRootPath stringByAppendingPathComponent:restingName];
+        struct stat rst;
+        if (lstat(restingPath.fileSystemRepresentation, &rst) == 0) {
+            NSLog(@"[GCPlayNameSwap] rename-back blocked, resting slot occupied: %@", restingPath);
+            continue;
+        }
+        if (rename(entryPath.fileSystemRepresentation, restingPath.fileSystemRepresentation) == 0) {
+            [fm removeItemAtPath:[restingPath stringByAppendingPathComponent:GCPlayNameSwapMarkerName] error:nil];
+        } else {
+            NSLog(@"[GCPlayNameSwap] rename-back failed: %@ -> %@", entryPath, restingPath);
+        }
+    }
+}
+
+// 换名：把静息夹改名为游玩名并返回生效夹名（失败/不启用一律返回静息名，
+// 行为与现行一致、绝不挡启动）。游玩名候选 = bundle id、.2、.3：位置为
+// 空直接改名；位置是符号链接且指向本夹（旧别名方案的残留）删链让位再
+// 改名；位置是真实目录/文件或指向别家的链接，绝不删除、试下一候选。
+// 先落标记后改名，标记落不了就不换名（无状态载体不冒险）。
+static NSString *GCPlayNameSwapToPlayName(NSString *dataRootPath, NSString *restingName, NSString *bundleId) {
+    if (restingName.length == 0 || bundleId.length == 0 || dataRootPath.length == 0) {
+        return restingName;
+    }
+    if (!GCPlayNameSwapNameHasNonASCII(restingName)) {
+        return restingName;
+    }
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *restingPath = [dataRootPath stringByAppendingPathComponent:restingName];
+    struct stat st;
+    if (lstat(restingPath.fileSystemRepresentation, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        return restingName;
+    }
+    NSString *markerPath = [restingPath stringByAppendingPathComponent:GCPlayNameSwapMarkerName];
+    if (![restingName writeToFile:markerPath atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
+        return restingName;
+    }
+    NSArray<NSString *> *candidates = @[bundleId,
+                                        [bundleId stringByAppendingString:@".2"],
+                                        [bundleId stringByAppendingString:@".3"]];
+    for (NSString *candidate in candidates) {
+        if ([candidate isEqualToString:restingName]) {
+            [fm removeItemAtPath:markerPath error:nil];
+            return restingName;
+        }
+        NSString *candidatePath = [dataRootPath stringByAppendingPathComponent:candidate];
+        struct stat cst;
+        if (lstat(candidatePath.fileSystemRepresentation, &cst) == 0) {
+            if (S_ISLNK(cst.st_mode)) {
+                NSString *dest = [fm destinationOfSymbolicLinkAtPath:candidatePath error:nil];
+                if (![dest isEqualToString:restingName] && ![dest isEqualToString:restingPath]) {
+                    continue; // 别家的链接：让位
+                }
+                [fm removeItemAtPath:candidatePath error:nil]; // 指向本夹的残留别名：删链让位
+            } else {
+                continue; // 真实目录/文件：绝不删除
+            }
+        }
+        if (rename(restingPath.fileSystemRepresentation, candidatePath.fileSystemRepresentation) == 0) {
+            return candidate;
+        }
+    }
+    [fm removeItemAtPath:markerPath error:nil]; // 候选全败：回滚标记，维持静息态
+    return restingName;
+}
+
 static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContainer, int argc, char *argv[]) {
     NSString *appError = nil;
     if([[lcUserDefaults objectForKey:@"LCWaitForDebugger"] boolValue]) {
@@ -1498,11 +1617,18 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
         }
     } else if (bookmarkURL) {
         newHomePath = bookmarkURL.path;
-    } else if(isSharedBundle) {
-        newHomePath = [NSString stringWithFormat:@"%@/Data/Application/%@", appGroupFolder.path, dataUUID];
-        
     } else {
-        newHomePath = [NSString stringWithFormat:@"%@/Data/Application/%@", docPath, dataUUID];
+        // 算 HOME 的漏斗处先把容器夹换成 ASCII 游玩名（见上方
+        // GCPlayNameSwapToPlayName），HOME 与由它派生的一切（CFFIXED_USER_
+        // HOME、tmp 软链落点、骨架目录、LCContainerInfo 读取）自然落在
+        // 真实 ASCII 路径。书签分支在上面已先行返回、不走换名（外置存储
+        // 是用户自管目录）。宿主侧记账（setContainerUsingByLC 的键、偏好
+        // 回收、LCContainer.containerURL）继续用静息名 dataUUID——那是
+        // 容器的记录身份，不是当下路径。
+        NSString *dataRootPath = isSharedBundle ? [appGroupFolder.path stringByAppendingPathComponent:@"Data/Application"]
+                                                : [docPath stringByAppendingPathComponent:@"Data/Application"];
+        NSString *effectiveFolderName = GCPlayNameSwapToPlayName(dataRootPath, dataUUID, appBundle.bundleIdentifier);
+        newHomePath = [dataRootPath stringByAppendingPathComponent:effectiveFolderName];
     }
     
     
@@ -1790,7 +1916,19 @@ int LiveContainerMain(int argc, char *argv[]) {
     
     // we put all files in app group after fixing 0xdead10cc. This call is here in case user upgraded lc with app's data in private Library/SharedDocuments
     [LCSharedUtils moveSharedAppFolderBack];
-    
+
+    // 回名自愈扫描，须在库与启动链读任何容器之前（尤其下方遗留偏好回收
+    // 按静息名拼路径之前，孤儿空壳清扫在 SwiftUI 层、更在其后）。回库
+    // 必经本入口，故每次回库都会先把上一局的换名夹改回；游玩中途断电/
+    // 被杀停在游玩名的夹也在下次打开 GC 时在此自愈。LiveProcess 跳过：
+    // 它是多任务托管进程（GC 已强制串行单开、永不走通），且其启动时主
+    // 进程客体可能正以游玩名运行。
+    if(!isLiveProcess) {
+        NSString *docPath = [NSString stringWithFormat:@"%s/Documents", getenv("LC_HOME_PATH")];
+        GCPlayNameSwapRestoreDataRoot([docPath stringByAppendingPathComponent:@"Data/Application"]);
+        GCPlayNameSwapRestoreDataRoot([lcAppGroupPath stringByAppendingPathComponent:@"GameCase/Data/Application"]);
+    }
+
     if(lastLaunchDataUUID) {
         NSString* lastLaunchType = [lcUserDefaults objectForKey:@"lastLaunchType"];
         NSString* preferencesTo;
